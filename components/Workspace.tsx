@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { CitySummary, MarketSummary } from "@/lib/types";
 import Chat from "./Chat";
 import Icon from "./Icon";
@@ -9,17 +10,51 @@ import { cityName, compactMoney, money } from "./format";
 
 const featured = ["toronto", "ottawa", "hamilton", "kitchener", "london", "mississauga", "barrie", "windsor"];
 
-type Props = { summary: MarketSummary; offline: boolean };
+const DEFAULT_CEILING = 2_000_000;
+const CEILING_MIN = 300_000;
+const CEILING_STEP = 50_000;
+const SORTS = ["featured", "name", "low", "high"] as const;
+type Sort = (typeof SORTS)[number];
 
-export default function Workspace({ summary, offline }: Props) {
+type Params = { get(name: string): string | null };
+
+/** URL params are hints: anything unknown falls back to the default state. */
+function paramCity(params: Params, cities: string[]): string {
+  const value = params.get("city");
+  return value && cities.includes(value) ? value : "toronto";
+}
+
+function paramCeiling(params: Params): number {
+  const value = Number(params.get("max"));
+  if (!Number.isFinite(value) || value < CEILING_MIN || value > DEFAULT_CEILING) return DEFAULT_CEILING;
+  // Snap to the slider's step so the restored URL matches a selectable value.
+  return CEILING_MIN + Math.round((value - CEILING_MIN) / CEILING_STEP) * CEILING_STEP;
+}
+
+function paramSort(params: Params): Sort {
+  const value = params.get("sort") ?? "";
+  return (SORTS as readonly string[]).includes(value) ? (value as Sort) : "featured";
+}
+
+function paramPair(params: Params, cities: string[]): [string, string] {
+  const [first, second] = (params.get("compare") ?? "").split(",");
+  if (first && second && first !== second && cities.includes(first) && cities.includes(second)) return [first, second];
+  if (first && cities.includes(first)) return [first, first === "ottawa" ? "toronto" : "ottawa"];
+  return ["toronto", "ottawa"];
+}
+
+type Props = { summary: MarketSummary; offline: boolean; enriched?: boolean };
+
+export default function Workspace({ summary, offline, enriched = false }: Props) {
   const cities = Object.keys(summary.cities);
-  const [selected, setSelected] = useState("toronto");
+  const searchParams = useSearchParams();
+  const [selected, setSelected] = useState(() => paramCity(searchParams, cities));
   const [view, setView] = useState<"explore" | "compare">("explore");
-  const [mobileView, setMobileView] = useState<"map" | "list">("map");
+  const [mobileView, setMobileView] = useState<"map" | "list">(() => (searchParams.get("tab") === "cities" ? "list" : "map"));
   const [query, setQuery] = useState("");
-  const [ceiling, setCeiling] = useState(2_000_000);
-  const [sort, setSort] = useState("featured");
-  const [pair, setPair] = useState<[string, string]>(["toronto", "ottawa"]);
+  const [ceiling, setCeiling] = useState(() => paramCeiling(searchParams));
+  const [sort, setSort] = useState<Sort>(() => paramSort(searchParams));
+  const [pair, setPair] = useState<[string, string]>(() => paramPair(searchParams, cities));
   const [detailView, setDetailView] = useState<"overview" | "beds">("overview");
   const [draft, setDraft] = useState<{ text: string; id: number } | null>(null);
   const agentDialog = useRef<HTMLDialogElement>(null);
@@ -47,6 +82,23 @@ export default function Workspace({ summary, offline }: Props) {
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
+
+  // Shareable atlas state: mirror the five selections into the URL without
+  // navigating, so a copied link reopens the same view.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const set = (key: string, value: string | null) => {
+      if (value === null) params.delete(key);
+      else params.set(key, value);
+    };
+    set("city", selected === "toronto" ? null : selected);
+    set("compare", pair[0] === "toronto" && pair[1] === "ottawa" ? null : `${pair[0]},${pair[1]}`);
+    set("sort", sort === "featured" ? null : sort);
+    set("max", ceiling === DEFAULT_CEILING ? null : String(ceiling));
+    set("tab", mobileView === "map" ? null : "cities");
+    const query = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+  }, [selected, pair, sort, ceiling, mobileView]);
 
   function selectCity(city: string) {
     setSelected(city);
@@ -83,7 +135,7 @@ export default function Workspace({ summary, offline }: Props) {
         <div className="index-heading"><div><p className="micro-label">YOUR STARTING POINT</p><h2>Find a place.</h2></div><span className="index-count">{cities.length}</span></div>
         <div className="city-search"><Icon name="search" /><input ref={searchRef} id="city-search" aria-label="Search Ontario cities" placeholder="Search cities" value={query} onChange={event => setQuery(event.target.value)} /><kbd>/</kbd></div>
         <details className="filter-disclosure"><summary><Icon name="filter" />Median price ceiling<span>{ceiling === 2_000_000 ? "Any price" : compactMoney(ceiling)}<Icon name="chevron" /></span></summary><div className="filter-content"><label htmlFor="ceiling">Show cities with a median up to <strong>{ceiling === 2_000_000 ? "any price" : money(ceiling)}</strong></label><input id="ceiling" type="range" min="300000" max="2000000" step="50000" value={ceiling} onChange={event => setCeiling(Number(event.target.value))} /><div><span>$300k</span><span>Any price</span></div><p>Filters city medians, not individual listings.</p></div></details>
-        <div className="index-toolbar"><span aria-live="polite">{visible.length} {visible.length === 1 ? "city" : "cities"}</span><label className="sr-only" htmlFor="sort">Sort cities</label><select id="sort" value={sort} onChange={event => setSort(event.target.value)}><option value="featured">Featured first</option><option value="name">City A–Z</option><option value="low">Lowest median</option><option value="high">Highest median</option></select></div>
+        <div className="index-toolbar"><span aria-live="polite">{visible.length} {visible.length === 1 ? "city" : "cities"}</span><label className="sr-only" htmlFor="sort">Sort cities</label><select id="sort" value={sort} onChange={event => setSort(event.target.value as Sort)}><option value="featured">Featured first</option><option value="name">City A–Z</option><option value="low">Lowest median</option><option value="high">Highest median</option></select></div>
         <div className="city-list">
           {visible.length === 0 ? <div className="no-cities"><h3>No cities match.</h3><p>Try another name or a higher median price.</p><button onClick={() => { setQuery(""); setCeiling(2_000_000); }}>Clear filters</button></div> : visible.map(city => <div key={city} className={`city-row${selected === city ? " selected" : ""}`}>
             <button className="city-row-main" aria-pressed={selected === city} onClick={() => selectCity(city)}><span className="row-dot" /><span className="row-city"><strong>{cityName(city)}</strong><span>{summary.cities[city].count.toLocaleString("en-CA")} sampled listings</span></span><span className="row-price">{compactMoney(summary.cities[city].medianPrice)}<small>median</small></span></button>
@@ -108,11 +160,11 @@ export default function Workspace({ summary, offline }: Props) {
 
     <dialog className="agent-dialog" ref={agentDialog} aria-label="Housing research assistant" onClick={event => { if (event.target === event.currentTarget) agentDialog.current?.close(); }}>
       <div className="dialog-top"><span><span className="agent-orb" />Housing research</span><button aria-label="Close agent" onClick={() => agentDialog.current?.close()}><Icon name="close" /></button></div>
-      <Chat offline={offline} draft={draft} />
+      <Chat offline={offline} draft={draft} enriched={enriched} />
     </dialog>
     <dialog className="about-dialog" ref={aboutDialog} aria-labelledby="about-title" onClick={event => { if (event.target === event.currentTarget) aboutDialog.current?.close(); }}>
       <div className="dialog-top"><span>About the atlas</span><button aria-label="Close dataset information" onClick={() => aboutDialog.current?.close()}><Icon name="close" /></button></div>
-      <div className="about-content"><p className="micro-label">ONTARIO HOUSING AGENT</p><h2 id="about-title">A sample of what’s asking.</h2><p>Explore {summary.totals.rows.toLocaleString("en-CA")} sanitized for-sale listings across {cities.length} Ontario cities. Prices are asking prices in Canadian dollars; they are not sale prices or valuations.</p><dl><div><dt>Sample built</dt><dd>{new Date(summary.generated_at).toLocaleDateString("en-CA", { dateStyle: "long", timeZone: "UTC" })} UTC</dd></div><div><dt>Source</dt><dd>Zillow research sample</dd></div><div><dt>Coverage</dt><dd>Varies by city. This is not the entire market.</dd></div></dl><p>Addresses and listing IDs have been removed. Map points locate cities, not properties. The agent’s numbers come from searches and statistics over this sample.</p>{offline ? <p className="about-offline">Offline demo: answers are scripted. Budget filters and follow-up reasoning require the live model.</p> : null}<p className="about-legal">Not affiliated with Zillow, REALTOR.ca, or any brokerage. Not financial or investment advice. Geography: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a> and <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> (CC BY).</p></div>
+      <div className="about-content"><p className="micro-label">ONTARIO HOUSING AGENT</p><h2 id="about-title">A sample of what’s asking.</h2><p>Explore {summary.totals.rows.toLocaleString("en-CA")} sanitized for-sale listings across {cities.length} Ontario cities. Prices are asking prices in Canadian dollars; they are not sale prices or valuations.</p><dl><div><dt>Sample built</dt><dd>{new Date(summary.generated_at).toLocaleDateString("en-CA", { dateStyle: "long", timeZone: "UTC" })} UTC</dd></div><div><dt>Source</dt><dd>Zillow research sample</dd></div><div><dt>Coverage</dt><dd>Varies by city. This is not the entire market.</dd></div></dl><p>{enriched ? "This local run uses enriched rows, so cards can show the address and link to the source listing. The public demo ships sanitized rows with addresses and listing IDs removed." : "Addresses and listing IDs have been removed."} Map points locate cities, not properties. The agent’s numbers come from searches and statistics over this sample.</p>{offline ? <p className="about-offline">Offline demo: answers are scripted. Budget filters and follow-up reasoning require the live model.</p> : null}<p className="about-legal">Not affiliated with Zillow, REALTOR.ca, or any brokerage. Not financial or investment advice. Geography: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a> and <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> (CC BY).</p></div>
     </dialog>
   </div>;
 }

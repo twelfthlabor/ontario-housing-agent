@@ -34,7 +34,7 @@ export type AgentErrorEvent = { type: "error"; code: AgentErrorCode; message: st
 export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; args: Record<string, unknown> }
-  | { type: "tool_result"; name: string; summary: string }
+  | { type: "tool_result"; name: string; summary: string; data?: unknown }
   | { type: "cached" }
   | { type: "done" }
   | AgentErrorEvent;
@@ -228,7 +228,12 @@ export async function* runAgent(options: RunAgentOptions): AsyncGenerator<AgentE
 
       yield { type: "tool", name: call.name, args };
       const result = executeTool(call.name, args);
-      yield { type: "tool_result", name: call.name, summary: summarizeResult(call.name, result) };
+      yield {
+        type: "tool_result",
+        name: call.name,
+        summary: summarizeResult(call.name, result),
+        data: result,
+      };
       messages.push({
         role: "tool",
         content: JSON.stringify(result),

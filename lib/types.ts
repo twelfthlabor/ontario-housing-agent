@@ -32,11 +32,17 @@ export type MarketSummary = {
 
 export type SearchQuery = {
   city: string;
+  fsa?: string;
   minPrice?: number;
   maxPrice?: number;
   beds?: number;
   sort?: "price_asc" | "price_desc";
   limit?: number;
+};
+
+export type SnapshotQuery = {
+  city: string;
+  fsa?: string;
 };
 
 export type SearchResult = {

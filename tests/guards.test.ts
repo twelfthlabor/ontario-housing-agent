@@ -113,7 +113,7 @@ describe("answer cache", () => {
     const state = createGuardState({ now: () => now, cacheTtlMs: 100 });
     putCachedAnswer(state, "question", "answer");
     now = 1_099;
-    expect(getCachedAnswer(state, "question")).toBe("answer");
+    expect(getCachedAnswer(state, "question")?.answer).toBe("answer");
     now = 1_100;
     expect(getCachedAnswer(state, "question")).toBeNull();
     expect(state.cache.size).toBe(0);
@@ -131,10 +131,30 @@ describe("answer cache", () => {
     const state = createGuardState();
     putCachedAnswer(state, "What does $800k buy in Ottawa?", "Ottawa has 100 listings.");
 
-    expect(getCachedAnswer(state, "  WHAT does $800k buy in ottawa?? ")).toBe(
-      "Ottawa has 100 listings.",
-    );
+    expect(getCachedAnswer(state, "  WHAT does $800k buy in ottawa?? ")).toEqual({
+      answer: "Ottawa has 100 listings.",
+      events: [],
+    });
     expect(getCachedAnswer(state, "Compare Hamilton and Kitchener")).toBeNull();
+  });
+
+  it("stores display events alongside the answer for replay", () => {
+    const state = createGuardState();
+    const events = [
+      { type: "tool" as const, name: "search_listings", args: { city: "ottawa", beds: 3 } },
+      {
+        type: "tool_result" as const,
+        name: "search_listings",
+        summary: "288 matches, cheapest $227,000",
+        data: { totalMatches: 288 },
+      },
+    ];
+    putCachedAnswer(state, "3 bedroom in Ottawa", "The sample has 288 matching listings.", events);
+
+    expect(getCachedAnswer(state, "3 bedroom in Ottawa")).toEqual({
+      answer: "The sample has 288 matching listings.",
+      events,
+    });
   });
 
   it("ignores empty questions and answers", () => {
@@ -150,12 +170,12 @@ describe("answer cache", () => {
     putCachedAnswer(state, "a", "answer a");
     putCachedAnswer(state, "b", "answer b");
 
-    expect(getCachedAnswer(state, "a")).toBe("answer a"); // refresh a
+    expect(getCachedAnswer(state, "a")?.answer).toBe("answer a"); // refresh a
 
     putCachedAnswer(state, "c", "answer c");
     expect(getCachedAnswer(state, "b")).toBeNull();
-    expect(getCachedAnswer(state, "a")).toBe("answer a");
-    expect(getCachedAnswer(state, "c")).toBe("answer c");
+    expect(getCachedAnswer(state, "a")?.answer).toBe("answer a");
+    expect(getCachedAnswer(state, "c")?.answer).toBe("answer c");
   });
 });
 

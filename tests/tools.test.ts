@@ -8,6 +8,7 @@ import {
   TOOL_SPECS,
 } from "../lib/tools";
 import { listings, summary } from "../lib/dataset";
+import type { Listing } from "../lib/types";
 
 const cities = Object.keys(summary.cities);
 const topCity = cities.reduce(
@@ -15,6 +16,13 @@ const topCity = cities.reduce(
   cities[0],
 );
 const topCount = summary.cities[topCity].count;
+
+function medianOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
 describe("knownCities", () => {
   it("returns the sorted, non-empty city list from the dataset", () => {
@@ -101,6 +109,61 @@ describe("searchListings", () => {
   });
 });
 
+describe("searchListings fsa filter", () => {
+  const sample = listings.find((row) => row.city === topCity && row.fsa !== null);
+  const fsa = sample?.fsa as string;
+  const expected = listings.filter((row) => row.city === topCity && row.fsa === fsa);
+
+  it("keeps only exact FSA matches, case-insensitively", () => {
+    expect(expected.length).toBeGreaterThan(0);
+    const lower = searchListings({ city: topCity, fsa: fsa.toLowerCase(), limit: 25 });
+    const upper = searchListings({ city: topCity.toUpperCase(), fsa: fsa.toUpperCase(), limit: 25 });
+    expect(lower.totalMatches).toBe(expected.length);
+    expect(lower).toEqual(upper);
+    expect(lower.returned).toBe(Math.min(25, expected.length));
+    for (const row of lower.listings) {
+      expect(row.fsa).toBe(fsa);
+    }
+  });
+
+  it("reduces a full postal code to its FSA", () => {
+    const spaced = searchListings({ city: topCity, fsa: `${fsa} 1A1`, limit: 25 });
+    const compact = searchListings({ city: topCity, fsa: `${fsa}1A1`.toLowerCase(), limit: 25 });
+    expect(spaced).toEqual(searchListings({ city: topCity, fsa, limit: 25 }));
+    expect(compact).toEqual(spaced);
+  });
+
+  it("takes the empty path for a malformed or foreign postal code", () => {
+    const empty = { totalMatches: 0, returned: 0, listings: [] };
+    expect(searchListings({ city: topCity, fsa: "M6" })).toEqual(empty);
+    expect(searchListings({ city: topCity, fsa: "90210" })).toEqual(empty);
+  });
+
+  it("composes with the other filters after the city filter", () => {
+    const priced = searchListings({ city: topCity, fsa, minPrice: 500_000, limit: 25 });
+    expect(priced.totalMatches).toBe(expected.filter((row) => row.price >= 500_000).length);
+    for (const row of priced.listings) {
+      expect(row.fsa).toBe(fsa);
+      expect(row.price).toBeGreaterThanOrEqual(500_000);
+    }
+  });
+
+  it("returns an empty result for an unknown FSA and excludes rows without an FSA", () => {
+    expect(listings.some((row) => row.fsa === "Z9Z")).toBe(false);
+    const empty = { totalMatches: 0, returned: 0, listings: [] };
+    expect(searchListings({ city: topCity, fsa: "Z9Z" })).toEqual(empty);
+    expect(searchListings({ city: "atlantis", fsa })).toEqual(empty);
+
+    const nullFsaCity = listings.find((row) => row.fsa === null)?.city as string;
+    const scopedFsa = listings.find((row) => row.city === nullFsaCity && row.fsa !== null)?.fsa as string;
+    const scoped = searchListings({ city: nullFsaCity, fsa: scopedFsa, limit: 25 });
+    expect(scoped.totalMatches).toBe(
+      listings.filter((row) => row.city === nullFsaCity && row.fsa === scopedFsa).length,
+    );
+    expect(scoped.listings.some((row) => row.fsa === null)).toBe(false);
+  });
+});
+
 describe("citySnapshot", () => {
   it("returns null for an unknown city", () => {
     expect(citySnapshot("atlantis")).toBeNull();
@@ -126,6 +189,65 @@ describe("citySnapshot", () => {
     expect(major?.shareUnder1M).toBe(expected.shareUnder1M);
     expect(major?.medianSqft).toBe(expected.medianSqft);
     expect(major?.updated).toBe(expected.updated);
+  });
+});
+
+describe("citySnapshot with fsa", () => {
+  const sample = listings.find((row) => row.city === topCity && row.fsa !== null);
+  const fsa = sample?.fsa as string;
+  const scopedRows = listings.filter((row) => row.city === topCity && row.fsa === fsa);
+
+  it("scopes every snapshot field to the FSA rows", () => {
+    const snapshot = citySnapshot({ city: topCity, fsa: fsa.toLowerCase() });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.city).toBe(topCity);
+    expect(snapshot?.count).toBe(scopedRows.length);
+    expect(snapshot?.medianPrice).toBe(medianOf(scopedRows.map((row) => row.price)));
+    expect(snapshot?.shareUnder1M).toBeGreaterThanOrEqual(0);
+    expect(snapshot?.shareUnder1M).toBeLessThanOrEqual(1);
+    expect(snapshot?.updated).toBe(
+      scopedRows.reduce((latest, row) => (row.seen > latest ? row.seen : latest), ""),
+    );
+    const sqfts = scopedRows.filter((row) => row.sqft !== null).map((row) => row.sqft as number);
+    expect(snapshot?.medianSqft).toBe(sqfts.length >= 10 ? medianOf(sqfts) : null);
+  });
+
+  it("reduces a full postal code to its FSA", () => {
+    const expected = citySnapshot({ city: topCity, fsa });
+    expect(expected).not.toBeNull();
+    expect(citySnapshot({ city: topCity, fsa: `${fsa} 1A1` })).toEqual(expected);
+    expect(citySnapshot({ city: topCity, fsa: `${fsa}1A1`.toLowerCase() })).toEqual(expected);
+  });
+
+  it("returns null for a malformed or foreign postal code", () => {
+    expect(citySnapshot({ city: topCity, fsa: "M6" })).toBeNull();
+    expect(citySnapshot({ city: topCity, fsa: "90210" })).toBeNull();
+  });
+
+  it("applies the 10-sample medianSqft rule inside the FSA", () => {
+    const byFsa = new Map<string, Listing[]>();
+    for (const row of listings) {
+      if (row.fsa === null) continue;
+      const bucket = byFsa.get(row.fsa) ?? [];
+      bucket.push(row);
+      byFsa.set(row.fsa, bucket);
+    }
+    const sqftCount = (rows: Listing[]) => rows.filter((row) => row.sqft !== null).length;
+    const sparse = [...byFsa.values()].find((rows) => sqftCount(rows) < 10);
+    const dense = [...byFsa.values()].find((rows) => sqftCount(rows) >= 10);
+    expect(sparse).toBeDefined();
+    expect(dense).toBeDefined();
+    expect(citySnapshot({ city: sparse?.[0].city as string, fsa: sparse?.[0].fsa as string })?.medianSqft).toBeNull();
+    expect(
+      typeof citySnapshot({ city: dense?.[0].city as string, fsa: dense?.[0].fsa as string })?.medianSqft,
+    ).toBe("number");
+  });
+
+  it("follows the not-found pattern for unknown FSAs and keeps city-wide lookups", () => {
+    expect(citySnapshot({ city: topCity, fsa: "Z9Z" })).toBeNull();
+    expect(citySnapshot({ city: "atlantis", fsa })).toBeNull();
+    expect(citySnapshot({ city: topCity })).toEqual(citySnapshot(topCity));
+    expect(citySnapshot({ city: topCity, fsa: "" })).toEqual(citySnapshot(topCity));
   });
 });
 
@@ -205,5 +327,27 @@ describe("tool specs and implementations", () => {
     expect(TOOL_IMPLS.compare_cities({ cities: [topCity, "atlantis"] })).toEqual(
       compareCities([topCity, "atlantis"]),
     );
+
+    const fsa = listings.find((row) => row.city === topCity && row.fsa !== null)?.fsa as string;
+    expect(
+      TOOL_IMPLS.search_listings({ city: topCity.toUpperCase(), fsa: fsa.toLowerCase(), limit: "2" }),
+    ).toEqual(searchListings({ city: topCity, fsa, limit: 2 }));
+    expect(TOOL_IMPLS.city_snapshot({ city: topCity, fsa: fsa.toLowerCase() })).toEqual(
+      citySnapshot({ city: topCity, fsa }),
+    );
+  });
+
+  it("documents the optional fsa parameter on the listing and snapshot specs", () => {
+    for (const name of ["search_listings", "city_snapshot"]) {
+      const spec = TOOL_SPECS.find((entry) => entry.function.name === name);
+      const properties = spec?.function.parameters.properties as unknown as Record<
+        string,
+        { description?: string }
+      >;
+      expect(properties.fsa?.description?.toLowerCase()).toContain("forward sortation area");
+      expect(properties.fsa?.description).toContain("full postal code is accepted and reduced to its FSA");
+      expect(properties.fsa?.description).toContain("rows without a postal code are excluded");
+      expect(spec?.function.parameters.required).toEqual(["city"]);
+    }
   });
 });

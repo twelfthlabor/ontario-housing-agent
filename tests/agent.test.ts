@@ -40,6 +40,12 @@ function toolOf(events: AgentEvent[]): Extract<AgentEvent, { type: "tool" }> | u
   );
 }
 
+function toolResultsOf(events: AgentEvent[]): Array<Extract<AgentEvent, { type: "tool_result" }>> {
+  return events.filter(
+    (event): event is Extract<AgentEvent, { type: "tool_result" }> => event.type === "tool_result",
+  );
+}
+
 const cities = knownCities();
 const firstCity = cities.find((city) => /ottawa/i.test(city)) ?? cities[0];
 const secondCity = cities.find((city) => city !== firstCity) ?? cities[1];
@@ -185,6 +191,91 @@ describe("mock-provider agent turns (no network)", () => {
   });
 });
 
+describe("tool_result structured data (no network)", () => {
+  it("attaches the city snapshot object to city_snapshot results", async () => {
+    const events = await collect(`What does $800k buy in ${firstCity}?`);
+    const result = toolResultsOf(events)[0];
+    expect(result?.name).toBe("city_snapshot");
+    expect(result?.data).toEqual(TOOL_IMPLS.city_snapshot({ city: firstCity }));
+    expect((result?.data as CitySnapshot | null)?.city).toBe(firstCity);
+  });
+
+  it("attaches the snapshot array to compare_cities results", async () => {
+    const events = await collect(`Compare ${firstCity} and ${secondCity}`);
+    const result = toolResultsOf(events)[0];
+    expect(result?.name).toBe("compare_cities");
+    expect(Array.isArray(result?.data)).toBe(true);
+    expect(result?.data).toEqual(TOOL_IMPLS.compare_cities({ cities: [firstCity, secondCity] }));
+  });
+
+  it("attaches search results with totalMatches, returned, and listings", async () => {
+    const events = await collect(`Cheapest 3-bed houses in ${firstCity}`);
+    const result = toolResultsOf(events)[0];
+    expect(result?.name).toBe("search_listings");
+    const data = result?.data as { totalMatches: number; returned: number; listings: unknown[] };
+    expect(Object.keys(data).sort()).toEqual(["listings", "returned", "totalMatches"]);
+    expect(data.totalMatches).toBeGreaterThan(0);
+    expect(data.listings.length).toBe(data.returned);
+    expect(result?.summary).toContain("cheapest $");
+  });
+
+  it("passes tool rows through untouched, extra dataset keys included", async () => {
+    const fixture = {
+      totalMatches: 2,
+      returned: 2,
+      listings: [
+        {
+          city: firstCity,
+          fsa: "M6P",
+          price: 650000,
+          beds: 2,
+          baths: 1,
+          sqft: 700,
+          seen: "2026-09-01",
+          url: "https://example.test/listing-1",
+          address: "1 Test Street",
+        },
+        {
+          city: firstCity,
+          fsa: "M6P",
+          price: 720000,
+          beds: 3,
+          baths: 2,
+          sqft: 900,
+          seen: "2026-09-02",
+          url: "https://example.test/listing-2",
+          address: "2 Test Street",
+        },
+      ],
+    };
+    const spy = vi.spyOn(TOOL_IMPLS, "search_listings").mockReturnValue(fixture);
+    const provider: Provider = {
+      name: "one-shot",
+      async *stream() {
+        yield {
+          type: "tool_call",
+          id: "call_1",
+          name: "search_listings",
+          arguments: JSON.stringify({ city: firstCity, fsa: "M6P" }),
+        };
+      },
+    };
+
+    try {
+      const events = await collect("anything", provider);
+      const result = toolResultsOf(events)[0];
+      expect(result?.data).toBe(fixture);
+      const rows = (result?.data as typeof fixture).listings;
+      expect(rows[0].url).toBe("https://example.test/listing-1");
+      expect(rows[0].address).toBe("1 Test Street");
+      expect(Object.keys(rows[0])).toContain("url");
+      expect(result?.summary).toBe("2 matches, cheapest $650,000");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("api/chat route guards (no network)", () => {
   beforeAll(() => {
     vi.stubEnv("MOCK_LLM", "1");
@@ -256,6 +347,8 @@ describe("api/chat route guards (no network)", () => {
 
     const payload = await response.text();
     expect(payload).toContain('"type":"tool"');
+    expect(payload).toContain('"type":"tool_result"');
+    expect(payload).toContain('"data":');
     expect(payload).toContain('"type":"done"');
   });
 

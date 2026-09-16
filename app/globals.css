@@ -218,6 +218,7 @@ dialog[open] { animation: dialog-enter 220ms var(--ease); }
 .new-chat { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #7e8b70; padding: 4px 0; }
 .new-chat svg { width: 13px; height: 13px; }
 .demo-notice { font-size: 10px; line-height: 1.7; color: #919987; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
+.enriched-notice { margin-bottom: 14px; padding: 8px 10px; border-radius: 6px; background: #eef2e5; font-size: 10px; line-height: 1.7; color: #7d8a6d; }
 .messages { flex: 1; min-height: 80px; overflow-y: auto; padding: 20px 0; display: flex; flex-direction: column; gap: 21px; scrollbar-width: thin; scrollbar-color: #d6decc transparent; overscroll-behavior: contain; }
 .chat-empty { margin: auto; text-align: center; padding: 25px 0; }
 .chat-empty-mark { display: inline-grid; place-items: center; width: 39px; height: 39px; border: 1px solid #d7dfcb; border-radius: 11px; color: #83956e; background: #eef2e5; transform: rotate(-5deg); margin-bottom: 20px; }
@@ -239,6 +240,16 @@ dialog[open] { animation: dialog-enter 220ms var(--ease); }
 .tool-chip .dot { width: 4px; height: 4px; border-radius: 50%; background: #c2946a; animation: breathe 1s infinite; }
 .tool-chip.done .dot { background: #8f9f72; animation: none; }
 .cached-note { font-size: 9px; color: #9da98c; }
+.listing-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; margin: 2px 0 0; padding: 0; list-style: none; }
+.listing-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 9px 10px; border: 1px solid #e0e7d5; border-radius: 8px; background: #fff; }
+.listing-card-price { font: 13px var(--mono); letter-spacing: -.3px; }
+.listing-card-meta { font-size: 9px; line-height: 1.5; color: #89917f; }
+.listing-card-address { font-size: 9px; line-height: 1.5; color: #6f7a68; overflow-wrap: anywhere; }
+.listing-card-city { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 9px; color: #8a9285; overflow-wrap: anywhere; }
+.listing-card-fsa { font: 8px var(--mono); letter-spacing: .5px; color: #66755c; background: #edf1e5; border-radius: 3px; padding: 2px 4px; }
+.listing-card a { margin-top: auto; font-size: 9px; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+.listing-cards-note { font: 8px var(--mono); color: #9aa28e; }
+.answer-basis { font-size: 9px; line-height: 1.6; color: #9aa28e; }
 .thinking { display: flex; gap: 4px; align-items: center; height: 20px; }
 .thinking > span:not(.sr-only) { width: 4px; height: 4px; border-radius: 50%; background: #9bac7f; animation: breathe 1s infinite; }
 .thinking > span:nth-child(2) { animation-delay: .15s; }

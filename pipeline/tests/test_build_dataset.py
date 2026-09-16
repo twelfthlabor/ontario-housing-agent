@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -29,16 +30,22 @@ def load_module():
 MODULE = load_module()
 
 
-def run_pipeline(out_dir: Path, source: Path = FIXTURES) -> subprocess.CompletedProcess:
+def run_pipeline(
+    out_dir: Path, source: Path = FIXTURES, enriched_out: Path | None = None
+) -> subprocess.CompletedProcess:
+    command = [sys.executable, str(SCRIPT), "--source", str(source), "--out", str(out_dir)]
+    if enriched_out is not None:
+        command += ["--enriched-out", str(enriched_out)]
     env = os.environ.copy()
     env["SOURCE_DATE_EPOCH"] = EPOCH
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), "--source", str(source), "--out", str(out_dir)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
+    return subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+
+
+def data_digests() -> dict[str, str]:
+    return {
+        name: hashlib.sha256((ROOT / "data" / name).read_bytes()).hexdigest()
+        for name in ("listings.json", "market_summary.json")
+    }
 
 
 def report_number(output: str, label: str) -> int:
@@ -178,6 +185,101 @@ class PipelineEndToEnd(unittest.TestCase):
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me")
 
 
+class EnrichedOutput(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        base = Path(cls.tmp.name)
+        cls.plain_out = base / "plain"
+        cls.enriched_out = base / "enriched"
+        cls.enriched_path = base / "listings_enriched.json"
+        cls.digests_before = data_digests()
+        cls.plain = run_pipeline(cls.plain_out)
+        cls.enriched_run = run_pipeline(cls.enriched_out, enriched_out=cls.enriched_path)
+        cls.digests_after = data_digests()
+        cls.listings = json.loads((cls.plain_out / "listings.json").read_text(encoding="utf-8"))
+        cls.enriched = json.loads(cls.enriched_path.read_text(encoding="utf-8"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_runs_succeed(self):
+        self.assertEqual(self.plain.returncode, 0, self.plain.stderr)
+        self.assertEqual(self.enriched_run.returncode, 0, self.enriched_run.stderr)
+
+    def test_sanitized_output_identical_with_and_without_flag(self):
+        for name in ("listings.json", "market_summary.json"):
+            self.assertEqual(
+                (self.enriched_out / name).read_bytes(),
+                (self.plain_out / name).read_bytes(),
+                name,
+            )
+
+    def test_row_count_parity_and_enriched_fields(self):
+        self.assertEqual(len(self.enriched), len(self.listings))
+        for row in self.enriched:
+            self.assertEqual(
+                set(row),
+                {"city", "fsa", "price", "beds", "baths", "sqft", "seen", "listing_id", "url", "address"},
+            )
+
+    def test_enriched_rows_map_one_to_one_onto_sanitized(self):
+        stripped = [{field: row[field] for field in MODULE.SANITIZED_FIELDS} for row in self.enriched]
+        self.assertEqual(stripped, self.listings)
+
+    def test_enriched_carries_deduped_source_url_and_address(self):
+        by_price = {row["price"]: row for row in self.enriched}
+        deduped = by_price[950000]  # T1; the newest scraped_at wins dedupe
+        self.assertEqual(deduped["listing_id"], "T1")
+        self.assertEqual(deduped["url"], "https://example.com/t1")
+        self.assertEqual(deduped["address"], "10 King St W, Toronto, ON M5H 1A1")
+        self.assertTrue(all(row["url"] and row["address"] for row in self.enriched))
+
+    def test_plain_run_writes_no_enriched_file(self):
+        self.assertFalse((self.plain_out / "listings_enriched.json").exists())
+
+    def test_data_dir_untouched(self):
+        self.assertEqual(self.digests_before, self.digests_after)
+
+
+class EnrichedOutGuard(unittest.TestCase):
+    def test_refuses_enriched_path_inside_sanitized_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "data"
+            enriched = out / "listings_enriched.json"
+            proc = run_pipeline(out, enriched_out=enriched)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("output/", proc.stderr)
+            self.assertFalse(enriched.exists())
+            self.assertFalse((out / "listings.json").exists())
+
+    def test_refuses_enriched_path_equal_to_sanitized_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "data"
+            proc = run_pipeline(out, enriched_out=out)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("output/", proc.stderr)
+
+    def test_refuses_case_variant_inside_sanitized_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "caseout"
+            enriched = Path(tmp) / "CASEOUT" / "listings_enriched.json"
+            proc = run_pipeline(out, enriched_out=enriched)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("output/", proc.stderr)
+            self.assertFalse(enriched.exists())
+            self.assertFalse((out / "listings.json").exists())
+
+    def test_allows_tmp_dir_enriched_path_outside_sanitized_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            enriched = base / "output" / "listings_enriched.json"
+            proc = run_pipeline(base / "data", enriched_out=enriched)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(enriched.is_file())
+
+
 class PureHelpers(unittest.TestCase):
     def test_should_replace(self):
         older = MODULE.parse_timestamp("2026-09-01T00:00:00Z")
@@ -263,6 +365,13 @@ class PureHelpers(unittest.TestCase):
         self.assertFalse(MODULE.DEFAULT_SOURCE.is_absolute())
         self.assertNotIn("/Users/", str(MODULE.DEFAULT_SOURCE))
         self.assertEqual(str(MODULE.DEFAULT_SOURCE), "../property-scraper/data/regions")
+
+    def test_is_within(self):
+        self.assertTrue(MODULE.is_within(Path("/tmp/x/data/listings_enriched.json"), Path("/tmp/x/data")))
+        self.assertTrue(MODULE.is_within(Path("/tmp/x/data"), Path("/tmp/x/data")))
+        self.assertTrue(MODULE.is_within(Path("/tmp/x/DATA/listings_enriched.json"), Path("/tmp/x/data")))
+        self.assertFalse(MODULE.is_within(Path("/tmp/x/output/listings_enriched.json"), Path("/tmp/x/data")))
+        self.assertFalse(MODULE.is_within(Path("/tmp/x/data-other/listings_enriched.json"), Path("/tmp/x/data")))
 
 
 if __name__ == "__main__":

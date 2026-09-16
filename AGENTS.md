@@ -5,14 +5,17 @@ live in README.md, docs/PLAN.md, and docs/DATA.md — don't duplicate them here.
 
 ## Commands
 
-- `npm test` — vitest run: all tests under tests/ (tools, agent, guards, cache route, providers, eval scoring). Single file:
-  `MOCK_LLM=1 npx vitest run tests/tools.test.ts`.
+- `npm test` — vitest run: all tests under tests/ (tools, agent, guards, cache route, dataset, providers, eval scoring).
+  Single file: `MOCK_LLM=1 npx vitest run tests/tools.test.ts`.
 - `npx tsc --noEmit` — typecheck. No linter or formatter is configured; don't add one.
 - `npm run build` — next build, also typechecks. Next 16 rewrites `tsconfig.json` on build (adds its type includes):
   review the diff instead of reverting, keep TypeScript at 5.9.x. `next-env.d.ts` is gitignored (Next regenerates it).
 - `npm run dev` — port 3000 (`PORT=3200 npm run dev` if busy). Prod: `npm run build && npm run start`.
 - `python3 -m unittest discover -s pipeline/tests -v` — pipeline tests, stdlib only (no venv/pandas); CI pins Python
   3.11. Single test: add `-k <pattern>` (e.g. `-p test_build_dataset.py -k dedupe`).
+- `python3 pipeline/build_dataset.py --enriched-out output/listings_enriched.json` — local-only build with source
+  `listing_id`/`url`/`address` reattached. Run against it with `ENRICHED_DATA=1 npm run dev`; never set `ENRICHED_DATA`
+  in a deployed environment.
 - `npm run evals` — live, loads `.env.local` with Node 24, needs `GROQ_API_KEY`, sequential with `EVAL_DELAY_MS` default 2500.
   `MOCK_LLM=1 npm run evals` — plumbing only, no network, exit 0. Flags: `--category`, `--limit`, `--mock`. Writes
   `evals/report.json` (gitignored). Live bars: tool 0.9, numeric 0.95, refusal 1.0; mock scores are not a quality
@@ -33,25 +36,37 @@ live in README.md, docs/PLAN.md, and docs/DATA.md — don't duplicate them here.
 - `lib/tools.ts` is the single source of truth for tool schemas (`TOOL_SPECS`), implementations (`TOOL_IMPLS`),
   stats, and city alias normalization (`"St. Catharines"` -> `st-catharines`). Keep it deterministic, synchronous,
   free of LLM/network imports.
+- FSA narrowing: `search_listings` takes an optional `fsa`; `city_snapshot` takes `{city, fsa}` (a bare string still
+  works internally for `compare_cities`). Full postal codes reduce to the leading 3-character FSA (`"M6P 1A1"` ->
+  `"M6P"`); rows without an FSA are excluded when a filter is set, and a scoped snapshot returns null when the FSA
+  has no rows.
 - `lib/agent.ts` is the typed-event agent loop: hard caps 3 tool iterations / 4 LLM calls per turn.
   `lib/providers.ts` calls Groq with plain `fetch` (no SDK dependency, 20s timeout per call), plus mock and optional
   Gemini providers.
 - Client-visible errors are stable codes only (`provider_error`, `misconfigured`, `rate_limited`,
   `budget_exhausted`); real details stay in server logs.
-- `/api/chat` SSE events: `text`, `tool`, `tool_result`, `cached`, `done`, `error`. Mismatched `Origin` -> 403 and
-  non-exact `application/json` -> 415, both before rate limiting; GET -> 405. Node runtime (not edge); bodies keep
-  the last 20 messages, 4,000 chars each.
+- `/api/chat` SSE events: `text`, `tool`, `tool_result`, `cached`, `done`, `error`. `tool_result` carries `data` with
+  the raw result: search `{totalMatches, returned, listings}` (rows as-is), snapshot object, compare array. Mismatched
+  `Origin` -> 403 and non-exact `application/json` -> 415, both before rate limiting; GET -> 405. Node runtime (not
+  edge); bodies keep the last 20 messages, 4,000 chars each.
 - `lib/guards.ts` is in-process best-effort: 5 req/min + 30/day per IP (`x-vercel-forwarded-for`, then
   `x-forwarded-for`), 800 LLM calls/day global, 200-entry LRU standalone-question cache (normalized, 15-minute TTL).
-  History-bearing requests bypass the cache; only completed, error-free answers are stored.
+  History-bearing requests bypass the cache; only completed, error-free answers are stored. Entries keep the answer's
+  `tool`/`tool_result` display events, so a hit replays `cached -> tool -> tool_result -> text -> done`.
   Cache hits remain per-IP rate limited, but can be served after the LLM budget runs out.
   Per instance, resets on cold start — never a security boundary.
 - `pipeline/build_dataset.py` (stdlib only, run from repo root): dedupe by listing id (newest `scraped_at` wins),
   filter, sanitize, write `data/listings.json` + `data/market_summary.json`. Default `--source` is the sibling
-  `../property-scraper/data/regions`; `--out` defaults to `data/`. `lib/dataset.ts` imports both files directly — no
-  database, no runtime reads.
-- Rows are exactly `{city,fsa,price,beds,baths,sqft,seen}`; never reintroduce address/url/agent/listing id. `sqft`
-  outside 200-20,000 is nulled (land acreage bug); per-city `medianSqft` is null under 10 samples.
+  `../property-scraper/data/regions`; `--out` defaults to `data/`. `--enriched-out` writes a local-only copy with
+  `listing_id`/`url`/`address` reattached and refuses paths inside the sanitized output dir (case-insensitive).
+  `lib/dataset.ts` imports both tracked files directly (no database, no runtime reads); `ENRICHED_DATA=1` (exact value)
+  swaps in `output/listings_enriched.json`, falling back to sanitized with one warning when it is missing or malformed.
+  Never set `ENRICHED_DATA` in a deployed environment.
+- Sanitized rows in `data/listings.json` are exactly `{city,fsa,price,beds,baths,sqft,seen}`; never reintroduce
+  address/url/agent/listing id into tracked data. `sqft` outside 200-20,000 is nulled (land acreage bug); per-city
+  `medianSqft` is null under 10 samples. Local enriched rows (gitignored `output/`) add `listing_id`/`url`/`address`
+  on top of those seven fields and must never reach tracked files, client bundles, or a deploy; `next.config.ts`
+  excludes `./output/**` from route traces.
 - Rebuilds are byte-identical only with a fixed `SOURCE_DATE_EPOCH`; otherwise `generated_at` changes.
 - Eval expected values come from `lib/tools` at runtime; never hardcode dataset numbers in `evals/cases.jsonl`.
 

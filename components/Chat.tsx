@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Icon from "./Icon";
+import { cityName, money } from "./format";
 
 type ToolChip = {
   id: string;
@@ -11,10 +12,26 @@ type ToolChip = {
   done: boolean;
 };
 
+type ListingCard = {
+  price: number;
+  beds: number | null;
+  baths: number | null;
+  sqft: number | null;
+  city: string;
+  fsa: string | null;
+  url?: string;
+  address?: string;
+};
+
+/** Basis line count and its priority: a search beats a snapshot, which beats a compare sum. */
+type Basis = { value: number; rank: number };
+
 type Message = {
   role: "user" | "assistant";
   content: string;
   tools: ToolChip[];
+  search: { cards: ListingCard[]; total: number } | null;
+  basis: Basis | null;
   cached: boolean;
   pending: boolean;
 };
@@ -72,10 +89,82 @@ function updateLastAssistant(
 }
 
 function emptyMessage(role: Message["role"]): Message {
-  return { role, content: "", tools: [], cached: false, pending: false };
+  return { role, content: "", tools: [], search: null, basis: null, cached: false, pending: false };
 }
 
-export default function Chat({ offline, draft }: { offline: boolean; draft: { text: string; id: number } | null }) {
+/** Cards shown per search result, and the chat panel is narrow: keep it small. */
+const CARD_LIMIT = 6;
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** One listing row, or null when it is too malformed to render truthfully. */
+function readCard(value: unknown): ListingCard | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const price = finiteNumber(row.price);
+  if (price === null || typeof row.city !== "string" || row.city === "") return null;
+  const card: ListingCard = {
+    price,
+    beds: finiteNumber(row.beds),
+    baths: finiteNumber(row.baths),
+    sqft: finiteNumber(row.sqft),
+    city: row.city,
+    fsa: typeof row.fsa === "string" && row.fsa ? row.fsa : null,
+  };
+  if (typeof row.url === "string" && row.url.startsWith("https://")) card.url = row.url;
+  if (typeof row.address === "string" && row.address.trim()) card.address = row.address.trim();
+  return card;
+}
+
+/** Valid search_listings payload -> the cards to render; anything else -> null. */
+function readSearch(data: unknown): { cards: ListingCard[]; total: number } | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const record = data as Record<string, unknown>;
+  if (!Array.isArray(record.listings)) return null;
+  const cards: ListingCard[] = [];
+  for (const row of record.listings) {
+    if (cards.length === CARD_LIMIT) break;
+    const card = readCard(row);
+    if (card) cards.push(card);
+  }
+  if (cards.length === 0) return null;
+  const total = finiteNumber(record.totalMatches);
+  return { cards, total: total === null || total < cards.length ? cards.length : total };
+}
+
+/** Sample size behind a tool result, for the "based on N listings" line, with its priority. */
+function readCount(name: string, data: unknown): Basis | null {
+  if (name === "search_listings" || name === "city_snapshot") {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    const record = data as Record<string, unknown>;
+    const count = finiteNumber(name === "search_listings" ? record.totalMatches : record.count);
+    if (count === null || count <= 0) return null;
+    return { value: count, rank: name === "search_listings" ? 2 : 1 };
+  }
+  if (name === "compare_cities") {
+    if (!Array.isArray(data) || data.length === 0) return null;
+    let sum = 0;
+    for (const row of data) {
+      const count = row && typeof row === "object" ? finiteNumber((row as Record<string, unknown>).count) : null;
+      if (count === null) return null;
+      sum += count;
+    }
+    return sum > 0 ? { value: sum, rank: 0 } : null;
+  }
+  return null;
+}
+
+function cardMeta(card: ListingCard): string {
+  const parts: string[] = [];
+  if (card.beds !== null) parts.push(`${card.beds} bd`);
+  if (card.baths !== null) parts.push(`${card.baths} ba`);
+  if (card.sqft !== null) parts.push(`${card.sqft.toLocaleString("en-CA")} sqft`);
+  return parts.join(" · ");
+}
+
+export default function Chat({ offline, draft, enriched = false }: { offline: boolean; draft: { text: string; id: number } | null; enriched?: boolean }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -189,7 +278,10 @@ export default function Chat({ offline, draft }: { offline: boolean; draft: { te
               );
               break;
             }
-            case "tool_result":
+            case "tool_result": {
+              const name = typeof event.name === "string" ? event.name : "";
+              const search = name === "search_listings" ? readSearch(event.data) : null;
+              const basis = readCount(name, event.data);
               setMessages((prev) =>
                 updateLastAssistant(prev, (message) => {
                   const tools = [...message.tools];
@@ -203,10 +295,16 @@ export default function Chat({ offline, draft }: { offline: boolean; draft: { te
                       break;
                     }
                   }
-                  return { ...message, tools };
+                  return {
+                    ...message,
+                    tools,
+                    search: search ?? message.search,
+                    basis: basis && (!message.basis || basis.rank >= message.basis.rank) ? basis : message.basis,
+                  };
                 }),
               );
               break;
+            }
             case "cached":
               setMessages((prev) => updateLastAssistant(prev, (message) => ({ ...message, cached: true })));
               break;
@@ -253,6 +351,7 @@ export default function Chat({ offline, draft }: { offline: boolean; draft: { te
     <section className="chat" aria-label="Chat with the housing agent">
       <div className="chat-heading"><span>{offline ? "Offline demo" : "Sample-based assistant"}</span><button className="new-chat" type="button" aria-label="New chat" disabled={busy || messages.length === 0} onClick={() => { setMessages([]); setInput(""); setError(null); inputRef.current?.focus(); }}><Icon name="plus" />New chat</button></div>
       {offline ? <p className="demo-notice">Scripted answers from the sample. Budget filters and follow-up questions need the live model.</p> : null}
+      {enriched ? <p className="enriched-notice">Local enriched data: cards can link to the source listing. The public demo runs on the sanitized sample.</p> : null}
       <div className="messages" ref={messagesRef} role="log" aria-live="polite">
         {messages.length === 0 ? <div className="chat-empty"><span className="chat-empty-mark"><Icon name="chat" /></span><h2>A closer look.</h2><p>Ask about a city’s asking prices,<br />or put two places side by side.</p></div> : null}
         {messages.map((message, index) => <div className={`msg msg-${message.role}`} key={`${message.role}-${index}`}>
@@ -260,6 +359,19 @@ export default function Chat({ offline, draft }: { offline: boolean; draft: { te
           {message.tools.length > 0 ? <div className="tool-chips">{message.tools.map(tool => <span className={`tool-chip${tool.done ? " done" : ""}`} key={tool.id} title={tool.summary}><span className="dot" aria-hidden="true" />{tool.label}</span>)}</div> : null}
           {message.content || message.pending ? <div className="bubble">{message.content}{message.pending && !message.content ? <span className="thinking" role="status"><span /><span /><span /><span className="sr-only">Checking the sample</span></span> : null}</div> : null}
           {message.cached ? <span className="cached-note">Cached answer</span> : null}
+          {message.search ? <>
+            <ul className="listing-cards" aria-label={`${message.search.cards.length} of ${message.search.total.toLocaleString("en-CA")} matching sample listings`}>
+              {message.search.cards.map((card, cardIndex) => <li className="listing-card" key={cardIndex}>
+                <strong className="listing-card-price">{money(card.price)}</strong>
+                {cardMeta(card) ? <span className="listing-card-meta">{cardMeta(card)}</span> : null}
+                {card.address ? <span className="listing-card-address">{card.address}</span> : null}
+                <span className="listing-card-city">{card.fsa ? <span className="listing-card-fsa">{card.fsa}</span> : null}{cityName(card.city)}</span>
+                {card.url ? <a href={card.url} target="_blank" rel="noopener noreferrer">View listing ↗</a> : null}
+              </li>)}
+            </ul>
+            {message.search.total > message.search.cards.length ? <span className="listing-cards-note">Showing {message.search.cards.length} of {message.search.total.toLocaleString("en-CA")}</span> : null}
+          </> : null}
+          {message.basis !== null ? <p className="answer-basis">Based on {message.basis.value.toLocaleString("en-CA")} sample listings · asking prices only, not live MLS</p> : null}
         </div>)}
       </div>
       {messages.length === 0 ? <div className="suggestions" aria-label="Suggested questions">{SUGGESTIONS.slice(0, 2).map(({ question, title, icon }) => <button className="question-suggestion" type="button" disabled={busy} key={question} onClick={() => void send(question)}><Icon name={icon} /><span>{title}</span><Icon name="arrow" /></button>)}</div> : null}

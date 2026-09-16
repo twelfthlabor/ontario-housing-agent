@@ -12,6 +12,7 @@ import {
   sharedGuardState,
   takeRateLimit,
 } from "@/lib/guards";
+import type { CachedDisplayEvent } from "@/lib/guards";
 import { getProvider } from "@/lib/providers";
 
 export const runtime = "nodejs";
@@ -104,10 +105,13 @@ export async function POST(request: NextRequest) {
       let answer = "";
       let completed = false;
       let failed = false;
+      // Replayed on a cache hit so the UI keeps cards, the "Based on N" line, and tool chips.
+      const displayEvents: CachedDisplayEvent[] = [];
       try {
         if (cached !== null) {
           send({ type: "cached" });
-          send({ type: "text", delta: cached });
+          for (const event of cached.events) send(event);
+          send({ type: "text", delta: cached.answer });
           send({ type: "done" });
         } else {
           for await (const event of runAgent({
@@ -120,12 +124,13 @@ export async function POST(request: NextRequest) {
             },
           })) {
             if (event.type === "text") answer += event.delta;
+            if (event.type === "tool" || event.type === "tool_result") displayEvents.push(event);
             if (event.type === "done") completed = true;
             if (event.type === "error") failed = true;
             send(event);
           }
           if (cacheable && completed && !failed && !request.signal.aborted && answer.trim()) {
-            putCachedAnswer(guards, question, answer.trim());
+            putCachedAnswer(guards, question, answer.trim(), displayEvents);
           }
         }
       } catch (error) {

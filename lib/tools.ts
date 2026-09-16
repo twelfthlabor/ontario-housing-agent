@@ -1,5 +1,5 @@
 import { listings } from "./dataset";
-import type { CitySnapshot, Listing, SearchQuery, SearchResult } from "./types";
+import type { CitySnapshot, Listing, SearchQuery, SearchResult, SnapshotQuery } from "./types";
 
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 25;
@@ -97,6 +97,15 @@ function finiteOrUndefined(value: number | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+const FSA_RE = /^[A-Z]\d[A-Z]/;
+
+/** Forward sortation area: leading FSA of a full postal code, case-insensitive. */
+function normaliseFsa(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const upper = value.trim().toUpperCase();
+  return FSA_RE.exec(upper)?.[0] ?? upper;
+}
+
 function normaliseLimit(value: number | undefined): number {
   const requested = finiteOrUndefined(value);
   if (requested === undefined) return DEFAULT_LIMIT;
@@ -106,12 +115,14 @@ function normaliseLimit(value: number | undefined): number {
 export function searchListings(q: SearchQuery): SearchResult {
   const city = normaliseCity(q?.city);
   const rows = byCity.get(city) ?? [];
+  const fsa = normaliseFsa(q?.fsa);
   const minPrice = finiteOrUndefined(q?.minPrice);
   const maxPrice = finiteOrUndefined(q?.maxPrice);
   const beds = finiteOrUndefined(q?.beds);
 
   const filtered = rows.filter(
     (row) =>
+      (fsa === "" || normaliseFsa(row.fsa) === fsa) &&
       (minPrice === undefined || row.price >= minPrice) &&
       (maxPrice === undefined || row.price <= maxPrice) &&
       (beds === undefined || row.beds === beds),
@@ -131,10 +142,20 @@ export function searchListings(q: SearchQuery): SearchResult {
   };
 }
 
-export function citySnapshot(city: string): CitySnapshot | null {
-  const snapshot = snapshots.get(normaliseCity(city));
-  if (!snapshot) return null;
-  return { ...snapshot, medianByBeds: { ...snapshot.medianByBeds } };
+export function citySnapshot(query: SnapshotQuery | string): CitySnapshot | null {
+  const city = typeof query === "string" ? query : asString(query?.city);
+  const fsa = typeof query === "string" ? "" : normaliseFsa(query?.fsa);
+  const key = normaliseCity(city);
+  const rows = byCity.get(key);
+  if (!rows) return null;
+  if (!fsa) {
+    const snapshot = snapshots.get(key);
+    if (!snapshot) return null;
+    return { ...snapshot, medianByBeds: { ...snapshot.medianByBeds } };
+  }
+  const scoped = rows.filter((row) => normaliseFsa(row.fsa) === fsa);
+  if (scoped.length === 0) return null;
+  return computeSnapshot(key, scoped);
 }
 
 export function compareCities(cities: string[]): CitySnapshot[] {
@@ -160,7 +181,7 @@ export const TOOL_SPECS = [
     function: {
       name: "search_listings",
       description:
-        `Search for-sale listings in one Ontario city, optionally filtered by price range and exact bedroom count. ` +
+        `Search for-sale listings in one Ontario city, optionally filtered by price range, exact bedroom count, and forward sortation area. ` +
         `Returns the matching listings plus totalMatches (the full count before limit). Sorted by price ascending by default. ` +
         `Use maxPrice when a question is about what a budget can afford. ${NEVER_INVENT}`,
       parameters: {
@@ -169,6 +190,11 @@ export const TOOL_SPECS = [
           city: {
             type: "string",
             description: 'City name, case-insensitive (for example "toronto").',
+          },
+          fsa: {
+            type: "string",
+            description:
+              '3-character forward sortation area (FSA), case-insensitive (for example "M6P"); a full postal code is accepted and reduced to its FSA; rows without a postal code are excluded. Narrows results to that part of the city.',
           },
           minPrice: {
             type: "number",
@@ -206,15 +232,20 @@ export const TOOL_SPECS = [
     function: {
       name: "city_snapshot",
       description:
-        `Get the market snapshot for one Ontario city: listing count, median price, first/third quartile prices, ` +
+        `Get the market snapshot for one Ontario city, optionally scoped to a forward sortation area: listing count, median price, first/third quartile prices, ` +
         `median price by bedroom count, share of listings under $1M, and median square footage. ` +
-        `Returns null for an unknown city. Use this for counts and market statistics; use search_listings for budget or filtered-listing questions. ${NEVER_INVENT}`,
+        `Returns null for an unknown city or an unknown forward sortation area. Use this for counts and market statistics; use search_listings for budget or filtered-listing questions. ${NEVER_INVENT}`,
       parameters: {
         type: "object",
         properties: {
           city: {
             type: "string",
             description: 'City name, case-insensitive (for example "ottawa").',
+          },
+          fsa: {
+            type: "string",
+            description:
+              'Optional 3-character forward sortation area (FSA), case-insensitive (for example "K1S"); a full postal code is accepted and reduced to its FSA; rows without a postal code are excluded. Scopes the snapshot to that part of the city.',
           },
         },
         required: ["city"],
@@ -264,6 +295,7 @@ export const TOOL_IMPLS: Record<string, (args: any) => unknown> = {
   search_listings: (args: any) =>
     searchListings({
       city: asString(args?.city),
+      fsa: asString(args?.fsa),
       minPrice: asNumber(args?.minPrice),
       maxPrice: asNumber(args?.maxPrice),
       beds: asNumber(args?.beds),
@@ -271,7 +303,7 @@ export const TOOL_IMPLS: Record<string, (args: any) => unknown> = {
         args?.sort === "price_desc" ? "price_desc" : args?.sort === "price_asc" ? "price_asc" : undefined,
       limit: asNumber(args?.limit),
     }),
-  city_snapshot: (args: any) => citySnapshot(asString(args?.city)),
+  city_snapshot: (args: any) => citySnapshot({ city: asString(args?.city), fsa: asString(args?.fsa) }),
   compare_cities: (args: any) =>
     compareCities(
       Array.isArray(args?.cities) ? args.cities.map(asString).filter((city: string) => city !== "") : [],

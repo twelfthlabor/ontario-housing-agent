@@ -18,6 +18,10 @@ streams the reply to the browser.
 | `data/listings.json`, `data/market_summary.json` | Sanitized dataset and per-city aggregates, kept as JSON in the repo (no database) | built |
 | `lib/tools.ts` | Deterministic search/stats functions + OpenAI-style tool schemas | built |
 | `/api/chat` | Streams the agent loop over SSE | built |
+| FSA narrowing | Optional `fsa` on `search_listings` and `city_snapshot`; full postal codes reduce to the 3-character FSA | built (2026-09-16) |
+| Structured `tool_result` data | SSE results carry `data`; search answers render up to 6 listing cards and a sample-size line; cache hits replay the display events | built (2026-09-16) |
+| Shareable atlas URL | city, compare pair, sort, price ceiling, and tab mirrored into the URL and restored on load | built (2026-09-16) |
+| Local enriched mode | `--enriched-out` + `ENRICHED_DATA=1` for address and source links; never tracked or deployed | built, local-only (2026-09-16) |
 | Groq `openai/gpt-oss-120b` | LLM provider on the free tier | built |
 | Gemini `gemini-2.5-flash-lite` | Optional fallback in `lib/providers.ts`; used only when `GEMINI_API_KEY` is set and Groq fails before emitting output | built |
 | `MOCK_LLM=1` | Deterministic mock LLM for tests/CI | built |
@@ -43,7 +47,7 @@ The same test and build commands pass locally. CI ran green on the first push
 
 - `text` — assistant text
 - `tool` — a tool call was chosen
-- `tool_result` — the deterministic result
+- `tool_result` — the deterministic result, with `data` carrying the raw payload (search `{totalMatches, returned, listings}`, snapshot object, compare array)
 - `cached` — the exact question was served from cache
 - `done` — stream finished
 - `error` — failure (rate limit, provider error, etc.)
@@ -61,8 +65,9 @@ limit is the provider's token quota (see Free-stack constraints).
 
 Numbers are computed by the tools; the model chooses tools and writes prose.
 Only completed, error-free standalone answers enter the shared cache. Conversations
-with history bypass it. Cache hits still consume the per-IP request allowance, but
-do not require remaining LLM budget.
+with history bypass it. Cached entries include the answer's tool chips and result
+payloads, so a hit replays the same cards and sample-size line. Cache hits still
+consume the per-IP request allowance, but do not require remaining LLM budget.
 
 ## Milestones
 
@@ -132,6 +137,21 @@ The optional Gemini default was updated from retired `gemini-2.0-flash` to
 The replacement supports [function calling](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite)
 and has a [standard free tier](https://ai.google.dev/gemini-api/docs/pricing).
 Provider integration tests use mocked HTTP; live fallback acceptance is still pending.
+
+### M4 — Richer answers (groundwork landed 2026-09-16)
+
+Landed: FSA-scoped search and snapshots, structured `tool_result` data rendered
+as listing cards and a sample-size line, shareable atlas URL state, cache replay
+of tool chips and cards, and a local-only enriched mode (`--enriched-out` +
+`ENRICHED_DATA=1`). Verified with 96 vitest tests, 31 pipeline tests, clean
+`tsc`/build, an independent security audit, and a browser pass in both modes at
+1440/412/393.
+
+Still open: multi-turn eval coverage, visitor feedback, and Langfuse traces;
+property type and price-cut history need snapshot archiving in
+`property-scraper` (see Later). URL state is share-only (one-way `replaceState`;
+back/forward does not resync it), and the answer cache is per-instance, resetting
+on cold start.
 
 ### Later (planned)
 

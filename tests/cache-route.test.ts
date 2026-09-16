@@ -12,6 +12,15 @@ function request(messages = [{ role: "user", content: "How many listings are in 
   });
 }
 
+type Frame = { type: string; [key: string]: unknown };
+
+function frames(raw: string): Frame[] {
+  return raw
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => JSON.parse(line.slice(6)) as Frame);
+}
+
 describe("completed, standalone answer caching", () => {
   beforeEach(() => {
     vi.stubEnv("MOCK_LLM", "1");
@@ -27,6 +36,26 @@ describe("completed, standalone answer caching", () => {
     const used = globalThis.__housingGuardState!.budget.used;
     expect(await (await POST(request())).text()).toContain('"type":"cached"');
     expect(globalThis.__housingGuardState!.budget.used).toBe(used);
+  });
+
+  it("replays stored tool and tool_result events around a cached search answer", async () => {
+    const search = [{ role: "user", content: "How many 3 bedroom listings are in Ottawa?" }];
+    const first = frames(await (await POST(request(search))).text());
+    const firstToolResult = first.find((frame) => frame.type === "tool_result");
+    expect(firstToolResult).toBeDefined();
+
+    const replay = frames(await (await POST(request(search))).text());
+    const types = replay.map((frame) => frame.type);
+    expect(types[0]).toBe("cached");
+    expect(types.at(-1)).toBe("done");
+    const tool = replay.find((frame) => frame.type === "tool");
+    expect(tool).toMatchObject({ name: "search_listings" });
+    const toolResult = replay.find((frame) => frame.type === "tool_result");
+    expect(toolResult?.data).toEqual(firstToolResult?.data);
+    expect(types.indexOf("tool")).toBeLessThan(types.indexOf("tool_result"));
+    expect(types.indexOf("tool_result")).toBeLessThan(types.indexOf("text"));
+    const text = replay.find((frame) => frame.type === "text");
+    expect(text?.delta).toContain("matching listings");
   });
 
   it("does not reuse or store answers from conversations with history", async () => {

@@ -3,9 +3,11 @@
 A free public demo where visitors chat with a tool-calling LLM agent about a
 sanitized sample of roughly 20,000 Ontario for-sale property listings across 36
 cities. The agent answers questions like "median asking price for a 3-bed in
-Hamilton?" by calling deterministic search and stats functions over a JSON
-dataset. Numbers come from those functions; the model picks tools and writes the
-reply.
+Hamilton?" or "how many listings are in M6P?" by calling deterministic search
+and stats functions over a JSON dataset. Numbers come from those functions; the
+model picks tools and writes the reply. Search answers render up to six listing
+cards and a sample-size line, and the atlas mirrors its state (city, compare
+pair, sort, price ceiling, tab) into the URL so a view can be shared.
 
 Live demo: https://ontario-housing-agent.vercel.app
 
@@ -29,7 +31,7 @@ Requires Node.js 24 and Python 3. Run all commands from this directory
 npm install
 python3 pipeline/build_dataset.py            # writes data/listings.json + data/market_summary.json
 MOCK_LLM=1 npm run dev                       # open the URL printed by Next.js
-npm test                                     # vitest: tools, agent, guards
+npm test                                     # vitest: tools, agent, guards, dataset
 npm run build                                # production build; npm start serves it
 MOCK_LLM=1 npm run evals                     # golden harness, plumbing only (no network)
 ```
@@ -50,6 +52,14 @@ gitignored. Reports include the answers and tool arguments for diagnosis.
 `pipeline/build_dataset.py` reads `../property-scraper/data/regions` by default;
 pass `--source <dir>` to point it elsewhere.
 
+`--enriched-out output/listings_enriched.json` additionally writes a local-only
+copy of the kept rows with `listing_id`, `url`, and `address` reattached (same
+rows and sanitized fields as `data/listings.json`). Run `ENRICHED_DATA=1 npm run
+dev` to load it: cards then show the address and a "View listing" link to the
+source, with a small banner and an enriched-mode About notice. The file belongs
+under the gitignored `output/` and is never tracked; unset, the app uses the
+tracked sanitized data. Never set `ENRICHED_DATA` in a deployed environment.
+
 ## Environment variables
 
 | Variable | Purpose |
@@ -59,6 +69,7 @@ pass `--source <dir>` to point it elsewhere.
 | `GEMINI_API_KEY` | Optional fallback provider, used only when set and a Groq call fails before emitting output. Groq remains the primary free provider. Keep billing disabled on both accounts. |
 | `GEMINI_MODEL` | Optional fallback model override; defaults to `gemini-2.5-flash-lite`. |
 | `MOCK_LLM` | Set to `1` to use the deterministic mock LLM (tests/CI; no key needed). |
+| `ENRICHED_DATA` | Local only: set to `1` to load `output/listings_enriched.json` (source URL/address included) instead of the tracked sanitized dataset. Never set in a deployed environment. |
 
 ## Architecture
 
@@ -99,7 +110,7 @@ ontario-housing-agent/
 ├── lib/                      tools.ts, agent.ts (tool loop), providers.ts (Groq/Gemini/mock), guards.ts
 ├── app/                      Next.js app: /api/chat SSE route and chat UI
 ├── components/               chat UI components
-├── tests/                    vitest: tools, agent, guards (e.g. tests/tools.test.ts)
+├── tests/                    vitest: tools, agent, guards, cache route, dataset (e.g. tests/tools.test.ts)
 └── evals/                    30 golden cases + run.ts harness (npm run evals; report.json gitignored)
 ```
 

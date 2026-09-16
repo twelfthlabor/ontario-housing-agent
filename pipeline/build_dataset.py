@@ -6,6 +6,10 @@ Reads raw scrape output (one listings.csv per region directory) and writes:
   data/listings.json        sanitized rows, sorted city asc / price desc
   data/market_summary.json  per-city statistics for the UI
 
+Optional --enriched-out writes a local-only copy of the same kept rows with
+listing_id/url/address reattached; it must live under output/ (gitignored) and
+is refused when it resolves inside the sanitized output directory.
+
 The raw scrape tree is treated as strictly read-only. Standard library only.
 """
 
@@ -42,6 +46,7 @@ FSA_RE = re.compile(r"ON\s+([A-Z]\d[A-Z])")
 DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 REQUIRED_HEADERS = ("listing_id", "address")
+SANITIZED_FIELDS = ("city", "fsa", "price", "beds", "baths", "sqft", "seen")
 
 
 def parse_money(value: str | None) -> float | None:
@@ -252,6 +257,7 @@ def transform(records: dict[str, tuple]) -> tuple[list[dict], dict[str, int], di
     listings: list[dict] = []
     for _timestamp, _order, city, row in records.values():
         address = row.get("address") or ""
+        listing_id = (row.get("listing_id") or "").strip()
         if not is_ontario(address):
             drops["non_on"] += 1
             continue
@@ -280,6 +286,10 @@ def transform(records: dict[str, tuple]) -> tuple[list[dict], dict[str, int], di
                 "baths": baths,
                 "sqft": sqft,
                 "seen": seen_date(row.get("scraped_at")),
+                # Local-only extras; build() strips them from the sanitized output.
+                "listing_id": listing_id,
+                "url": (row.get("url") or "").strip(),
+                "address": address,
             }
         )
     listings.sort(
@@ -340,6 +350,21 @@ def generated_timestamp() -> str:
     return stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def is_within(path: Path, parent: Path) -> bool:
+    """True when path resolves to parent or one of its descendants.
+
+    Compared case-insensitively because case-insensitive filesystems (macOS
+    APFS, Windows) treat a differently cased spelling as the same directory,
+    which would otherwise let --enriched-out bypass the sanitized-dir guard.
+    """
+    try:
+        resolved = os.path.normcase(str(path.resolve())).casefold()
+        root = os.path.normcase(str(parent.resolve())).casefold()
+        return os.path.commonpath([resolved, root]) == root
+    except ValueError:
+        return False
+
+
 def write_json(path: Path, payload) -> None:
     indent = None if path.name == "listings.json" else 2
     separators = (",", ":") if indent is None else None
@@ -354,6 +379,7 @@ def print_report(
     listings: list[dict],
     source: Path,
     out: Path,
+    enriched_out: Path | None = None,
 ) -> None:
     cities = sorted({row["city"] for row in listings})
     print("Filter report")
@@ -373,11 +399,18 @@ def print_report(
         print(f"  skipped files with unexpected headers: {', '.join(stats['bad_headers'])}")
     print(f"  wrote: {out / 'listings.json'}")
     print(f"  wrote: {out / 'market_summary.json'}")
+    if enriched_out is not None:
+        print(f"  wrote (local-only): {enriched_out}")
 
 
-def build(source: Path, out: Path) -> tuple[list[dict], dict, dict, dict]:
+def build(
+    source: Path, out: Path, enriched_out: Path | None = None
+) -> tuple[list[dict], dict, dict, dict]:
     records, stats, csv_paths = dedupe(source)
-    listings, drops, nulled = transform(records)
+    rows, drops, nulled = transform(records)
+    # Sanitized rows are a strict field subset of the same kept rows, so the
+    # enriched file can never drift from the published row set.
+    listings = [{field: row[field] for field in SANITIZED_FIELDS} for row in rows]
 
     if stats["unique"] != len(listings) + sum(drops.values()):
         raise RuntimeError(
@@ -395,7 +428,10 @@ def build(source: Path, out: Path) -> tuple[list[dict], dict, dict, dict]:
     out.mkdir(parents=True, exist_ok=True)
     write_json(out / "listings.json", listings)
     write_json(out / "market_summary.json", summary)
-    print_report(stats, drops, nulled, listings, source, out)
+    if enriched_out is not None:
+        enriched_out.parent.mkdir(parents=True, exist_ok=True)
+        write_json(enriched_out, rows)
+    print_report(stats, drops, nulled, listings, source, out, enriched_out)
     return listings, summary, stats, drops
 
 
@@ -403,10 +439,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build sanitized listings + market summary")
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
+    parser.add_argument(
+        "--enriched-out",
+        default=None,
+        help="optional local-only path (under output/) for kept rows with listing_id/url/address",
+    )
     args = parser.parse_args(argv)
 
     source = Path(args.source).expanduser()
     out = Path(args.out).expanduser()
+    enriched_out = Path(args.enriched_out).expanduser() if args.enriched_out else None
 
     if not source.is_dir():
         print(f"error: source directory not found: {source}", file=sys.stderr)
@@ -415,7 +457,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: no */listings.csv under {source}; refusing to write outputs", file=sys.stderr)
         return 2
 
-    build(source, out)
+    if enriched_out is not None and is_within(enriched_out, out):
+        print(
+            f"error: --enriched-out must not be inside the sanitized output directory {out}; "
+            "write it under output/ (for example output/listings_enriched.json)",
+            file=sys.stderr,
+        )
+        return 2
+
+    build(source, out, enriched_out)
     return 0
 
 

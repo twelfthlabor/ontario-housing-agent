@@ -23,6 +23,16 @@ export type RateDecision =
 
 export type BudgetDecision = { allowed: boolean; remaining: number };
 
+/**
+ * Display events worth replaying from cache: tool chips and result cards.
+ * Text is stored separately as the answer string.
+ */
+export type CachedDisplayEvent =
+  | { type: "tool"; name: string; args: Record<string, unknown> }
+  | { type: "tool_result"; name: string; summary: string; data?: unknown };
+
+export type CachedAnswer = { answer: string; events: CachedDisplayEvent[] };
+
 export type GuardState = {
   now: () => number;
   maxPerMinute: number;
@@ -33,7 +43,7 @@ export type GuardState = {
   ipMinute: Map<string, Window>;
   ipDay: Map<string, Window>;
   budget: { dayKey: string; used: number };
-  cache: Map<string, { answer: string; expiresAt: number }>;
+  cache: Map<string, { answer: string; events: CachedDisplayEvent[]; expiresAt: number }>;
 };
 
 export function createGuardState(
@@ -170,7 +180,7 @@ export function normalizeQuestion(question: string): string {
     .trim();
 }
 
-export function getCachedAnswer(state: GuardState, question: string): string | null {
+export function getCachedAnswer(state: GuardState, question: string): CachedAnswer | null {
   const key = normalizeQuestion(question);
   if (!key) return null;
   const hit = state.cache.get(key);
@@ -182,15 +192,20 @@ export function getCachedAnswer(state: GuardState, question: string): string | n
   // Refresh recency for the LRU order.
   state.cache.delete(key);
   state.cache.set(key, hit);
-  return hit.answer;
+  return { answer: hit.answer, events: hit.events };
 }
 
-export function putCachedAnswer(state: GuardState, question: string, answer: string): void {
+export function putCachedAnswer(
+  state: GuardState,
+  question: string,
+  answer: string,
+  events: CachedDisplayEvent[] = [],
+): void {
   const key = normalizeQuestion(question);
   const value = answer.trim();
   if (!key || !value) return;
   state.cache.delete(key);
-  state.cache.set(key, { answer: value, expiresAt: state.now() + state.cacheTtlMs });
+  state.cache.set(key, { answer: value, events, expiresAt: state.now() + state.cacheTtlMs });
   while (state.cache.size > state.cacheMax) {
     const oldest = state.cache.keys().next().value;
     if (oldest === undefined) break;

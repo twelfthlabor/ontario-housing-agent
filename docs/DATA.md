@@ -33,6 +33,20 @@ It writes:
 - `data/listings.json` — sanitized listings
 - `data/market_summary.json` — per-city aggregates
 
+## Local enriched mode
+
+`--enriched-out` adds a local-only copy of the same kept rows with `listing_id`,
+`url`, and `address` reattached, for click-through while developing:
+
+```bash
+python3 pipeline/build_dataset.py --enriched-out output/listings_enriched.json
+```
+
+The row set and the 7 sanitized fields are identical to `data/listings.json`;
+the file is expected under `output/` (gitignored) and must never be tracked or
+deployed. Set `ENRICHED_DATA=1` to load it (missing file = warning plus
+sanitized fallback); unset, the app uses the tracked sanitized data.
+
 ## What is collected
 
 - Current for-sale asking listings.
