@@ -1,0 +1,152 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
+import { BudgetExhaustedError, errorEventFrom, runAgent, sseEvent } from "@/lib/agent";
+import type { AgentEvent, AgentInputMessage } from "@/lib/agent";
+import {
+  checkBudget,
+  consumeLlmCall,
+  firstHopIp,
+  getCachedAnswer,
+  putCachedAnswer,
+  sharedGuardState,
+  takeRateLimit,
+} from "@/lib/guards";
+import { getProvider } from "@/lib/providers";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type IncomingBody = { messages?: unknown };
+
+function sanitizeMessages(input: unknown): AgentInputMessage[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter(
+      (item): item is { role: "user" | "assistant"; content: string } =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        (item as { role?: unknown }).role !== undefined &&
+        ((item as { role?: unknown }).role === "user" ||
+          (item as { role?: unknown }).role === "assistant") &&
+        typeof (item as { content?: unknown }).content === "string",
+    )
+    .map((item) => ({ role: item.role, content: item.content.slice(0, 4_000) }))
+    .slice(-20);
+}
+
+/** Same-origin only: an absent Origin is fine, a mismatched one is not. */
+function originMatches(request: NextRequest): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  const host = request.headers.get("host") ?? request.nextUrl.host;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+export async function POST(request: NextRequest) {
+  if (!originMatches(request)) {
+    return NextResponse.json({ error: "forbidden_origin" }, { status: 403 });
+  }
+
+  const mediaType = (request.headers.get("content-type") ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (mediaType !== "application/json") {
+    return NextResponse.json({ error: "unsupported_media_type" }, { status: 415 });
+  }
+
+  let body: IncomingBody;
+  try {
+    body = (await request.json()) as IncomingBody;
+  } catch {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const messages = sanitizeMessages(body?.messages);
+  if (messages.length === 0 || messages[messages.length - 1].role !== "user") {
+    return NextResponse.json({ error: "messages_required" }, { status: 400 });
+  }
+
+  const guards = sharedGuardState();
+  const ip = firstHopIp(
+    request.headers.get("x-vercel-forwarded-for"),
+    request.headers.get("x-forwarded-for"),
+  );
+  const rate = takeRateLimit(guards, ip);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: "rate_limited", retry_after_s: rate.retryAfterS },
+      { status: 429 },
+    );
+  }
+  // Follow-ups depend on history; a last-question-only key cannot represent it.
+  const question = messages[messages.length - 1].content;
+  const cacheable = messages.length === 1;
+  const cached = cacheable ? getCachedAnswer(guards, question) : null;
+  if (cached === null && !checkBudget(guards).allowed) {
+    return NextResponse.json({ error: "budget_exhausted" }, { status: 503 });
+  }
+
+  const provider = getProvider();
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: AgentEvent) => {
+        controller.enqueue(encoder.encode(sseEvent(event)));
+      };
+
+      let answer = "";
+      let completed = false;
+      let failed = false;
+      try {
+        if (cached !== null) {
+          send({ type: "cached" });
+          send({ type: "text", delta: cached });
+          send({ type: "done" });
+        } else {
+          for await (const event of runAgent({
+            messages,
+            provider,
+            signal: request.signal,
+            beforeLlmCall: () => {
+              const decision = consumeLlmCall(guards);
+              if (!decision.allowed) throw new BudgetExhaustedError();
+            },
+          })) {
+            if (event.type === "text") answer += event.delta;
+            if (event.type === "done") completed = true;
+            if (event.type === "error") failed = true;
+            send(event);
+          }
+          if (cacheable && completed && !failed && !request.signal.aborted && answer.trim()) {
+            putCachedAnswer(guards, question, answer.trim());
+          }
+        }
+      } catch (error) {
+        send(errorEventFrom(error));
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // Stream already closed.
+        }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    },
+  });
+}

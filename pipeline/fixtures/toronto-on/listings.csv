@@ -1,0 +1,13 @@
+listing_id,address,price,beds,baths,sqft,agent,url,source_page,scraped_at
+T1,"10 King St W, Toronto, ON M5H 1A1",900000,2,2,850,Agent A,https://example.com/t1,1,2026-09-01T10:00:00Z
+T1,"10 King St W, Toronto, ON M5H 1A1",950000,2,2,850,Agent A,https://example.com/t1,1,2026-09-05T10:00:00Z
+T2,"20 Queen St, Toronto, ON M4N 2G7",1200000,3,2,1100,Agent B,https://example.com/t2,2,2026-09-02T09:00:00Z
+T3,"30 Bay St, Toronto, ON M5J 2T3",1,2,1,900,Agent C,https://example.com/t3,3,2026-09-02T09:00:00Z
+T4,"40 Elm St, Buffalo, NY 14201",700000,3,2,1200,Agent D,https://example.com/t4,4,2026-09-02T09:00:00Z
+T5,"50 Spadina Ave, Toronto, ON M5V 2K7",800000,,,,Agent E,https://example.com/t5,5,2026-09-03T09:00:00Z
+this line is malformed and should be skipped
+T6,"60 Yonge St, Toronto, ON",600000
+T7,"70 Bloor St W, Toronto, ON",700000,1,1,,Agent F,https://example.com/t7,7,2026-09-03T12:00:00Z
+T8,"80 Front St E, Toronto, ON M5E 1B4",N/A,2,1,900,Agent G,https://example.com/t8,8,2026-09-04T09:00:00Z
+T9,"90 Queen St E, Toronto, ON M5C 1S6",5000000,,,22,Agent M,https://example.com/t9,9,2026-09-04T10:00:00Z
+T10,"100 King St W, Toronto, ON M5X 1A9",2000000,3,2,25000,Agent N,https://example.com/t10,10,2026-09-04T10:00:00Z

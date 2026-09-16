@@ -1,0 +1,586 @@
+{
+  "generated_at": "2026-09-14T05:19:42Z",
+  "source": "zillow research sample",
+  "totals": {
+    "rows": 19356,
+    "cities": 36
+  },
+  "cities": {
+    "ajax": {
+      "count": 219,
+      "medianPrice": 900000,
+      "q1Price": 745900,
+      "q3Price": 1199000,
+      "medianByBeds": {
+        "1": 399898,
+        "2": 599900,
+        "3": 759900,
+        "4": 989000,
+        "5+": 1199000
+      },
+      "shareUnder1M": 0.58,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "barrie": {
+      "count": 813,
+      "medianPrice": 699647,
+      "q1Price": 579900,
+      "q3Price": 879900,
+      "medianByBeds": {
+        "1": 386894,
+        "2": 475000,
+        "3": 625000,
+        "4": 769990,
+        "5+": 914000
+      },
+      "shareUnder1M": 0.875,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "belleville": {
+      "count": 296,
+      "medianPrice": 552500,
+      "q1Price": 444450,
+      "q3Price": 699900,
+      "medianByBeds": {
+        "1": 299900,
+        "2": 434450,
+        "3": 517400,
+        "4": 679900,
+        "5+": 699000
+      },
+      "shareUnder1M": 0.949,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "brampton": {
+      "count": 813,
+      "medianPrice": 945000,
+      "q1Price": 779000,
+      "q3Price": 1199999,
+      "medianByBeds": {
+        "1": 361000,
+        "2": 468800,
+        "3": 749000,
+        "4": 884950,
+        "5+": 1189000
+      },
+      "shareUnder1M": 0.593,
+      "medianSqft": 1565,
+      "updated": "2026-09-13"
+    },
+    "brantford": {
+      "count": 486,
+      "medianPrice": 580000,
+      "q1Price": 485000,
+      "q3Price": 729000,
+      "medianByBeds": {
+        "1": 352450,
+        "2": 404945,
+        "3": 568894,
+        "4": 699000,
+        "5+": 699900
+      },
+      "shareUnder1M": 0.951,
+      "medianSqft": 1295.5,
+      "updated": "2026-09-14"
+    },
+    "burlington": {
+      "count": 759,
+      "medianPrice": 929000,
+      "q1Price": 649000,
+      "q3Price": 1389900,
+      "medianByBeds": {
+        "1": 450000,
+        "2": 649900,
+        "3": 949350,
+        "4": 1299999,
+        "5+": 1995000
+      },
+      "shareUnder1M": 0.592,
+      "medianSqft": 1397.5,
+      "updated": "2026-09-14"
+    },
+    "cambridge": {
+      "count": 470,
+      "medianPrice": 699000,
+      "q1Price": 564900,
+      "q3Price": 945900,
+      "medianByBeds": {
+        "1": 405500,
+        "2": 493000,
+        "3": 649900,
+        "4": 799900,
+        "5+": 999955
+      },
+      "shareUnder1M": 0.834,
+      "medianSqft": 1557,
+      "updated": "2026-09-14"
+    },
+    "chatham-kent": {
+      "count": 601,
+      "medianPrice": 449000,
+      "q1Price": 319900,
+      "q3Price": 575350,
+      "medianByBeds": {
+        "1": 199750,
+        "2": 349900,
+        "3": 449900,
+        "4": 529900,
+        "5+": 599450
+      },
+      "shareUnder1M": 0.955,
+      "medianSqft": 1700,
+      "updated": "2026-09-14"
+    },
+    "guelph": {
+      "count": 527,
+      "medianPrice": 699990,
+      "q1Price": 525000,
+      "q3Price": 899900,
+      "medianByBeds": {
+        "1": 405000,
+        "2": 549999,
+        "3": 699990,
+        "4": 862450,
+        "5+": 1099900
+      },
+      "shareUnder1M": 0.837,
+      "medianSqft": 1447,
+      "updated": "2026-09-14"
+    },
+    "hamilton": {
+      "count": 815,
+      "medianPrice": 749900,
+      "q1Price": 549900,
+      "q3Price": 1019000,
+      "medianByBeds": {
+        "1": 249900,
+        "2": 444450,
+        "3": 679949.5,
+        "4": 875000,
+        "5+": 1099777
+      },
+      "shareUnder1M": 0.75,
+      "medianSqft": 1487,
+      "updated": "2026-09-13"
+    },
+    "innisfil": {
+      "count": 463,
+      "medianPrice": 820000,
+      "q1Price": 599000,
+      "q3Price": 1199000,
+      "medianByBeds": {
+        "1": 424000,
+        "2": 493450,
+        "3": 778000,
+        "4": 975000,
+        "5+": 1524949.5
+      },
+      "shareUnder1M": 0.667,
+      "medianSqft": 3648,
+      "updated": "2026-09-14"
+    },
+    "kawartha-lakes": {
+      "count": 778,
+      "medianPrice": 669950,
+      "q1Price": 499000,
+      "q3Price": 875000,
+      "medianByBeds": {
+        "1": 399450,
+        "2": 534900,
+        "3": 679900,
+        "4": 779000,
+        "5+": 998000
+      },
+      "shareUnder1M": 0.838,
+      "medianSqft": 2015,
+      "updated": "2026-09-14"
+    },
+    "kingston": {
+      "count": 557,
+      "medianPrice": 599000,
+      "q1Price": 474950,
+      "q3Price": 819950,
+      "medianByBeds": {
+        "1": 432450,
+        "2": 434900,
+        "3": 569950,
+        "4": 711000,
+        "5+": 870000
+      },
+      "shareUnder1M": 0.86,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "kitchener": {
+      "count": 797,
+      "medianPrice": 605000,
+      "q1Price": 420324.5,
+      "q3Price": 827000,
+      "medianByBeds": {
+        "1": 329900,
+        "2": 409950,
+        "3": 629950,
+        "4": 825000,
+        "5+": 1072900
+      },
+      "shareUnder1M": 0.861,
+      "medianSqft": 1345.5,
+      "updated": "2026-09-13"
+    },
+    "london": {
+      "count": 813,
+      "medianPrice": 625000,
+      "q1Price": 499000,
+      "q3Price": 829000,
+      "medianByBeds": {
+        "1": 222450,
+        "2": 424950,
+        "3": 549900,
+        "4": 729900,
+        "5+": 826950
+      },
+      "shareUnder1M": 0.872,
+      "medianSqft": 1500,
+      "updated": "2026-09-13"
+    },
+    "markham": {
+      "count": 809,
+      "medianPrice": 1199000,
+      "q1Price": 888000,
+      "q3Price": 1692500,
+      "medianByBeds": {
+        "1": 449000,
+        "2": 604350,
+        "3": 938000,
+        "4": 1219500,
+        "5+": 1749000
+      },
+      "shareUnder1M": 0.376,
+      "medianSqft": null,
+      "updated": "2026-09-13"
+    },
+    "milton": {
+      "count": 454,
+      "medianPrice": 970000,
+      "q1Price": 699999,
+      "q3Price": 1395000,
+      "medianByBeds": {
+        "1": 459000,
+        "2": 594450,
+        "3": 867000,
+        "4": 1149999,
+        "5+": 1549000
+      },
+      "shareUnder1M": 0.548,
+      "medianSqft": 1594,
+      "updated": "2026-09-14"
+    },
+    "mississauga": {
+      "count": 799,
+      "medianPrice": 1099000,
+      "q1Price": 749900,
+      "q3Price": 1599000,
+      "medianByBeds": {
+        "1": 399900,
+        "2": 529000,
+        "3": 769000,
+        "4": 1199900,
+        "5+": 1549999.5
+      },
+      "shareUnder1M": 0.463,
+      "medianSqft": 2002,
+      "updated": "2026-09-13"
+    },
+    "newmarket": {
+      "count": 296,
+      "medianPrice": 1038950,
+      "q1Price": 819900,
+      "q3Price": 1362500,
+      "medianByBeds": {
+        "1": 479000,
+        "2": 689999,
+        "3": 839000,
+        "4": 1099000,
+        "5+": 1399000
+      },
+      "shareUnder1M": 0.493,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "niagara-falls": {
+      "count": 541,
+      "medianPrice": 619900,
+      "q1Price": 499000,
+      "q3Price": 799900,
+      "medianByBeds": {
+        "1": 365000,
+        "2": 459990,
+        "3": 599444,
+        "4": 699900,
+        "5+": 749000
+      },
+      "shareUnder1M": 0.889,
+      "medianSqft": 1540,
+      "updated": "2026-09-14"
+    },
+    "oakville": {
+      "count": 768,
+      "medianPrice": 1598000,
+      "q1Price": 999999,
+      "q3Price": 2327500,
+      "medianByBeds": {
+        "1": 440000,
+        "2": 599990,
+        "3": 1098500,
+        "4": 1699000,
+        "5+": 2273000
+      },
+      "shareUnder1M": 0.253,
+      "medianSqft": 2322.5,
+      "updated": "2026-09-14"
+    },
+    "orillia": {
+      "count": 219,
+      "medianPrice": 649000,
+      "q1Price": 499999,
+      "q3Price": 784900,
+      "medianByBeds": {
+        "1": 434450,
+        "2": 529900,
+        "3": 624900,
+        "4": 737450,
+        "5+": 849000
+      },
+      "shareUnder1M": 0.89,
+      "medianSqft": 4462,
+      "updated": "2026-09-14"
+    },
+    "ottawa": {
+      "count": 802,
+      "medianPrice": 749900,
+      "q1Price": 579000,
+      "q3Price": 999900,
+      "medianByBeds": {
+        "1": 315000,
+        "2": 414450,
+        "3": 649000,
+        "4": 859999.5,
+        "5+": 1169000
+      },
+      "shareUnder1M": 0.756,
+      "medianSqft": null,
+      "updated": "2026-09-13"
+    },
+    "peterborough": {
+      "count": 346,
+      "medianPrice": 589450,
+      "q1Price": 475000,
+      "q3Price": 729900,
+      "medianByBeds": {
+        "1": 404944,
+        "2": 469000,
+        "3": 549900,
+        "4": 669950,
+        "5+": 695000
+      },
+      "shareUnder1M": 0.945,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "pickering": {
+      "count": 370,
+      "medianPrice": 921959,
+      "q1Price": 698000,
+      "q3Price": 1269000,
+      "medianByBeds": {
+        "1": 449000,
+        "2": 549950,
+        "3": 769900,
+        "4": 980000,
+        "5+": 1349900
+      },
+      "shareUnder1M": 0.603,
+      "medianSqft": 1786.5,
+      "updated": "2026-09-14"
+    },
+    "richmond-hill": {
+      "count": 812,
+      "medianPrice": 1338000,
+      "q1Price": 896500,
+      "q3Price": 1998000,
+      "medianByBeds": {
+        "1": 439000,
+        "2": 578700,
+        "3": 979495,
+        "4": 1399000,
+        "5+": 1980000
+      },
+      "shareUnder1M": 0.347,
+      "medianSqft": null,
+      "updated": "2026-09-13"
+    },
+    "sarnia": {
+      "count": 75,
+      "medianPrice": 425000,
+      "q1Price": 349500,
+      "q3Price": 529900,
+      "medianByBeds": {
+        "1": 279000,
+        "2": 324900,
+        "3": 409900,
+        "4": 469950,
+        "5+": 422449.5
+      },
+      "shareUnder1M": 0.973,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "sault-ste-marie": {
+      "count": 12,
+      "medianPrice": 203499.5,
+      "q1Price": 166950,
+      "q3Price": 314949.5,
+      "medianByBeds": {
+        "1": null,
+        "2": 190950,
+        "3": 229949.5,
+        "4": 889499.5,
+        "5+": 1849000
+      },
+      "shareUnder1M": 0.833,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "st-catharines": {
+      "count": 603,
+      "medianPrice": 589000,
+      "q1Price": 448000,
+      "q3Price": 798888,
+      "medianByBeds": {
+        "1": 299000,
+        "2": 414900,
+        "3": 569000,
+        "4": 677000,
+        "5+": 754000
+      },
+      "shareUnder1M": 0.869,
+      "medianSqft": 1175.5,
+      "updated": "2026-09-14"
+    },
+    "sudbury": {
+      "count": 20,
+      "medianPrice": 464450,
+      "q1Price": 249450,
+      "q3Price": 724450,
+      "medianByBeds": {
+        "1": null,
+        "2": 249950,
+        "3": 499500,
+        "4": 624450,
+        "5+": 849900
+      },
+      "shareUnder1M": 0.9,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "thunder-bay": {
+      "count": 38,
+      "medianPrice": 364900,
+      "q1Price": 279900,
+      "q3Price": 575000,
+      "medianByBeds": {
+        "1": null,
+        "2": 599900,
+        "3": 279900,
+        "4": 339900,
+        "5+": 535000
+      },
+      "shareUnder1M": 1,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "toronto": {
+      "count": 722,
+      "medianPrice": 1049950,
+      "q1Price": 699000,
+      "q3Price": 2200000,
+      "medianByBeds": {
+        "1": 443899.5,
+        "2": 648000,
+        "3": 958000,
+        "4": 1349000,
+        "5+": 2775000
+      },
+      "shareUnder1M": 0.493,
+      "medianSqft": 1274.5,
+      "updated": "2026-09-14"
+    },
+    "vaughan": {
+      "count": 813,
+      "medianPrice": 1349000,
+      "q1Price": 929999.5,
+      "q3Price": 1892450,
+      "medianByBeds": {
+        "1": 460000,
+        "2": 598000,
+        "3": 999900,
+        "4": 1448900,
+        "5+": 1899894
+      },
+      "shareUnder1M": 0.314,
+      "medianSqft": 2283,
+      "updated": "2026-09-13"
+    },
+    "waterloo": {
+      "count": 458,
+      "medianPrice": 533944,
+      "q1Price": 409900,
+      "q3Price": 799999,
+      "medianByBeds": {
+        "1": 337450,
+        "2": 449000,
+        "3": 650000,
+        "4": 895000,
+        "5+": 799000
+      },
+      "shareUnder1M": 0.869,
+      "medianSqft": 1222,
+      "updated": "2026-09-14"
+    },
+    "whitby": {
+      "count": 379,
+      "medianPrice": 949900,
+      "q1Price": 789000,
+      "q3Price": 1249000,
+      "medianByBeds": {
+        "1": 448381,
+        "2": 568900,
+        "3": 799000,
+        "4": 999900,
+        "5+": 1264450
+      },
+      "shareUnder1M": 0.57,
+      "medianSqft": null,
+      "updated": "2026-09-14"
+    },
+    "windsor": {
+      "count": 813,
+      "medianPrice": 479900,
+      "q1Price": 354450,
+      "q3Price": 599900,
+      "medianByBeds": {
+        "1": 259888,
+        "2": 377950,
+        "3": 429900,
+        "4": 527450,
+        "5+": 599000
+      },
+      "shareUnder1M": 0.962,
+      "medianSqft": 1298,
+      "updated": "2026-09-13"
+    }
+  }
+}

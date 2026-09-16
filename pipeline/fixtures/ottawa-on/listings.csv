@@ -1,0 +1,6 @@
+listing_id,address,price,beds,baths,sqft,agent,url,source_page,scraped_at
+O1,"1 Wellington St, Ottawa, ON K1A 0A9",500000,3,2,1400,Agent H,https://example.com/o1,1,2026-09-01T08:00:00Z
+O2,"2 Bank St, Ottawa, ON K1A 0B1",650000,4,3,1700,Agent I,https://example.com/o2,2,2026-09-01T08:00:00Z
+O3,"3 Rideau St, Ottawa, ON K1N 5Y5",300000,0,1,1000,Agent J,https://example.com/o3,3,2026-09-01T08:00:00Z
+O4,"4 Sparks St, Ottawa, ON K1P 5A5",250000,,2,,Agent K,https://example.com/o4,4,2026-09-01T08:00:00Z
+O5,"5 Elgin St, Ottawa, ON K1P 5K6",400000,3,15,1200,Agent L,https://example.com/o5,5,2026-09-01T08:00:00Z

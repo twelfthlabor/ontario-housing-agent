@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# next
+.next/
+out/
+next-env.d.ts
+
+# tests / build caches
+coverage/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# python pipeline
+__pycache__/
+*.pyc
+
+# evals (generated; cases.jsonl and run.ts are tracked)
+evals/report.json
+
+# os
+.DS_Store
+
+# local browser QA session files
+.playwright-cli/
+
+# downloaded cartographic source extracts
+output/research/*.zip
+output/research/*.geojson
+
+# local QA screenshots and research extracts
+output/
