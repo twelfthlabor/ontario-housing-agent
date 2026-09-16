@@ -6,9 +6,11 @@ M2 live proof is complete. The full 30-case suite passes every bar:
 tool_accuracy 1.00 (bar 0.90), numeric_accuracy 1.00 (bar 0.95), and
 refusal_accuracy 1.00 (bar 1.00), with `quality_gate_passed: true`. A Groq API
 key is configured in the gitignored `.env.local` (free tier, billing stays
-disabled). The next milestone is **M3 deploy**, which waits on human steps:
-the project has no license, the repo still has zero commits, and nothing is
-deployed.
+disabled). **M3 deploy has landed**: the demo is live at
+https://ontario-housing-agent.vercel.app (Vercel Hobby, project scope
+`cse-lover`, `GROQ_API_KEY` set as a hidden project secret), and CI ran green on
+the first push. Only the Langfuse traces and the demo video remain from M3. The
+project still has no LICENSE (optional).
 
 The design is appropriate for this small snapshot demo. Keep the JSON dataset
 and deterministic tools; adding a database now would not resolve answer quality.
@@ -53,6 +55,9 @@ for every city.
 - Two atlas label collisions found by independent visual verification were fixed
   (marker labels clear the measured heading/caption rect; lake labels hide on
   intersection) and re-verified with before/after measurements.
+- Initial commit pushed 2026-09-16: CI ran green (js + python jobs) and the
+  Vercel Hobby production deploy went live with `GROQ_API_KEY` as a hidden
+  project secret.
 
 ## Verification
 
@@ -66,35 +71,25 @@ for every city.
 - UI re-verification passed with before/after measurements after the two label
   fixes; screenshots and reports are under `/tmp/ui-verify-recheck/` (transient).
   `output/` is gitignored, so QA artifacts and research extracts stay local.
+- Live smoke checks (2026-09-16): homepage 200, `GET /api/chat` 405, wrong
+  content type 415, mismatched `Origin` 403, security headers present, and one
+  live question returned a streamed answer grounded in tool output
+  ("kitchener: 797 listings, median $605,000").
 - Earlier checks still standing: mock evals completed all 30 cases (plumbing
   evidence only); production server curl checks covered the streamed events,
   cache hits and bypass, 403/405/415/429 responses, and security headers; a
   source rebuild with a fixed `SOURCE_DATE_EPOCH` produced byte-identical data
   files.
 
-## Next steps, in order
+## Next steps
 
-1. Publish preparation, all human steps: add a `LICENSE` (the project has none),
-   make the first commit, then `gh repo create` and push. CI
-   (`.github/workflows/ci.yml`) has never run because the repo still has zero
-   commits; it first runs on that push.
-2. Deploy to Vercel Hobby with `GROQ_API_KEY` set in the project environment and
-   billing disabled. Nothing is deployed yet.
-3. Rotate the API key after the demo: it was shared outside the secret store
-   once. Never package or share `.next/`, whose build cache can hold build-time
-   env values.
-4. Budget the free tier: live evals and demo traffic share one account quota
-   (openai/gpt-oss-120b: 30 RPM / 8K TPM / 200K TPD). Full live runs use
-   `EVAL_DELAY_MS=30000` and consume a meaningful share of the daily tokens.
-5. M3 still needs Langfuse traces (not built), rate-limit verification on the
-   deployed instance, and a 3-minute demo video. Start traces with operational
-   metadata rather than raw visitor messages.
-6. Quality caveats: add multi-turn cases before calling conversational behavior
-   proven, and review recorded answers before release since scoring is
-   heuristic. The tools still lack property type, sold prices, history, and mean
-   prices, so the model must explain those gaps rather than claim unsupported
-   answers. Verify the Gemini fallback independently if it will be enabled.
+The demo is live and CI is green. What remains:
 
-The repository still has zero commits, so it remains untracked. No commit, push,
-deployment, or billing change was performed in this pass. Weekly refresh and
-price history remain separate later milestones.
+1. LICENSE, optional: the repo is public and currently unlicensed.
+2. Langfuse traces, not built. Start with operational metadata rather than raw
+   visitor messages.
+3. 3-minute demo video.
+4. Weekly dataset refresh; price history needs snapshot archiving in
+   `property-scraper`.
+
+Billing stays disabled on every provider.

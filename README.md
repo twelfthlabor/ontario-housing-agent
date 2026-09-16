@@ -7,6 +7,8 @@ Hamilton?" by calling deterministic search and stats functions over a JSON
 dataset. Numbers come from those functions; the model picks tools and writes the
 reply.
 
+Live demo: https://ontario-housing-agent.vercel.app
+
 Not a valuation tool, listing service, or source of financial advice. See
 [Disclaimers](#disclaimers).
 
@@ -19,6 +21,7 @@ Not a valuation tool, listing service, or source of financial advice. See
 
 ## Quickstart
 
+These steps run the demo locally; the live demo is at the URL above.
 Requires Node.js 24 and Python 3. Run all commands from this directory
 (`ontario-housing-agent/`), with the `property-scraper` checkout as a sibling.
 
@@ -102,9 +105,9 @@ ontario-housing-agent/
 
 ## Documentation
 
-- [docs/STATUS.md](docs/STATUS.md) — latest verified state, fixes, and next steps.
-- [docs/PLAN.md](docs/PLAN.md) — architecture details, milestones, constraints.
-- [docs/DATA.md](docs/DATA.md) — what the dataset contains and how to refresh it.
+- [docs/STATUS.md](docs/STATUS.md): latest verified state, fixes, and next steps.
+- [docs/PLAN.md](docs/PLAN.md): architecture details, milestones, constraints.
+- [docs/DATA.md](docs/DATA.md): what the dataset contains and how to refresh it.
 
 ## Disclaimers
 
@@ -116,6 +119,6 @@ ontario-housing-agent/
   land listings whose acreage the source renders as interior square feet) are
   treated as missing. The sample is a single snapshot and can be stale.
 - Nothing here is financial, legal, or real-estate advice.
-- The demo runs on free tiers (Groq today; Vercel Hobby and Langfuse Hobby
-  planned); exhausting the daily free-tier token quota can make it unavailable
-  during traffic spikes.
+- The demo runs on free tiers: Groq for the model and Vercel Hobby for hosting.
+  Exhausting the daily free-tier token quota can make it unavailable during
+  traffic spikes.

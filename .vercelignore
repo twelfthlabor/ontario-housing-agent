@@ -1,0 +1,4 @@
+.env*
+.next
+output
+.playwright-cli

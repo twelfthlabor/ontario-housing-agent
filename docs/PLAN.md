@@ -23,8 +23,8 @@ streams the reply to the browser.
 | `MOCK_LLM=1` | Deterministic mock LLM for tests/CI | built |
 | Evals harness (`evals/run.ts`, `npm run evals`) | 30 golden cases in `evals/cases.jsonl` (10 tool choice, 10 numeric, 10 refusals) -> `evals/report.json` (gitignored) | live-accepted 2026-09-16 (30/30; see [STATUS.md](STATUS.md)) |
 | Langfuse Hobby traces | Observability | planned |
-| GitHub Actions CI | JS tests + build (Node 24, `MOCK_LLM=1`) and pipeline unittest (Python 3.11) gate | written, not yet exercised on GitHub |
-| Vercel Hobby deployment | Public URL | planned |
+| GitHub Actions CI | JS tests + build (Node 24, `MOCK_LLM=1`) and pipeline unittest (Python 3.11) gate | green on the first push (2026-09-16) |
+| Vercel Hobby deployment | Public URL | deployed 2026-09-16: https://ontario-housing-agent.vercel.app |
 
 ### CI
 
@@ -34,8 +34,8 @@ LLM is mocked):
 - `js`: `npm ci`, `npx vitest run` with `MOCK_LLM=1`, `npm run build`, on Node 24
 - `python`: `python3 -m unittest discover -s pipeline/tests -v`, on Python 3.11
 
-The same test and build commands pass locally. Status: written, not yet
-exercised on GitHub; it first runs when the repo is pushed.
+The same test and build commands pass locally. CI ran green on the first push
+(js and python jobs).
 
 ### Agent loop
 
@@ -107,14 +107,23 @@ Green thresholds:
 - refusals 100%
 - CI green
 
-### M3 — Deploy (pending human steps)
+### M3 — Deploy (live 2026-09-16)
 
-Not started: no license, no commits, no remote, nothing deployed. The path is:
-add a `LICENSE`, first commit, `gh repo create` + push (CI first runs), then
-Vercel Hobby with `GROQ_API_KEY` in the project env.
+Live at https://ontario-housing-agent.vercel.app (Vercel Hobby, project scope
+`cse-lover`) with `GROQ_API_KEY` set as a hidden project secret. Smoke checks on
+the deployed instance: homepage 200, `GET /api/chat` 405, wrong content type
+415, mismatched `Origin` 403, security headers present, and one live question
+streamed an answer grounded in tool output ("kitchener: 797 listings, median
+$605,000"). The guards respond as designed; rate limits are verified by smoke
+checks, not load-tested.
+
+Done:
 
 - Vercel Hobby URL live with a Groq key
-- Rate limits verified
+- Guards smoke-tested on the deployed instance
+
+Pending:
+
 - Langfuse traces visible
 - 3-minute demo video
 

@@ -34,3 +34,6 @@ output/research/*.geojson
 
 # local QA screenshots and research extracts
 output/
+
+# vercel local link state
+.vercel/
