@@ -125,4 +125,6 @@ ontario-housing-agent/
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+PolyForm Noncommercial 1.0.0: free for personal, research, and other
+noncommercial use; commercial use requires permission. This is a research
+project built on a sanitized sample of public listing data. See [LICENSE](LICENSE).

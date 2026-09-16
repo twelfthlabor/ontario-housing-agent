@@ -9,8 +9,7 @@ key is configured in the gitignored `.env.local` (free tier, billing stays
 disabled). **M3 deploy has landed**: the demo is live at
 https://ontario-housing-agent.vercel.app (Vercel Hobby, project scope
 `cse-lover`, `GROQ_API_KEY` set as a hidden project secret), and CI ran green on
-the first push. Only Langfuse traces and the demo video remain from M3. The code is MIT
-licensed.
+the first push. Only Langfuse traces and the demo video remain from M3. The code is PolyForm Noncommercial 1.0.0 licensed (research project).
 
 The design is appropriate for this small snapshot demo. Keep the JSON dataset
 and deterministic tools; adding a database now would not resolve answer quality.
