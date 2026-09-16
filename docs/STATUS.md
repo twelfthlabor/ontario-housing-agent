@@ -9,8 +9,8 @@ key is configured in the gitignored `.env.local` (free tier, billing stays
 disabled). **M3 deploy has landed**: the demo is live at
 https://ontario-housing-agent.vercel.app (Vercel Hobby, project scope
 `cse-lover`, `GROQ_API_KEY` set as a hidden project secret), and CI ran green on
-the first push. Only the Langfuse traces and the demo video remain from M3. The
-project still has no LICENSE (optional).
+the first push. Only Langfuse traces and the demo video remain from M3. The code is MIT
+licensed.
 
 The design is appropriate for this small snapshot demo. Keep the JSON dataset
 and deterministic tools; adding a database now would not resolve answer quality.
@@ -85,11 +85,10 @@ for every city.
 
 The demo is live and CI is green. What remains:
 
-1. LICENSE, optional: the repo is public and currently unlicensed.
-2. Langfuse traces, not built. Start with operational metadata rather than raw
+1. Langfuse traces, not built. Start with operational metadata rather than raw
    visitor messages.
-3. 3-minute demo video.
-4. Weekly dataset refresh; price history needs snapshot archiving in
+2. 3-minute demo video.
+3. Weekly dataset refresh; price history needs snapshot archiving in
    `property-scraper`.
 
 Billing stays disabled on every provider.

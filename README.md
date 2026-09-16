@@ -122,3 +122,7 @@ ontario-housing-agent/
 - The demo runs on free tiers: Groq for the model and Vercel Hobby for hosting.
   Exhausting the daily free-tier token quota can make it unavailable during
   traffic spikes.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
