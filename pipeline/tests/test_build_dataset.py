@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -30,22 +29,11 @@ def load_module():
 MODULE = load_module()
 
 
-def run_pipeline(
-    out_dir: Path, source: Path = FIXTURES, enriched_out: Path | None = None
-) -> subprocess.CompletedProcess:
+def run_pipeline(out_dir: Path, source: Path = FIXTURES) -> subprocess.CompletedProcess:
     command = [sys.executable, str(SCRIPT), "--source", str(source), "--out", str(out_dir)]
-    if enriched_out is not None:
-        command += ["--enriched-out", str(enriched_out)]
     env = os.environ.copy()
     env["SOURCE_DATE_EPOCH"] = EPOCH
     return subprocess.run(command, capture_output=True, text=True, env=env, check=False)
-
-
-def data_digests() -> dict[str, str]:
-    return {
-        name: hashlib.sha256((ROOT / "data" / name).read_bytes()).hexdigest()
-        for name in ("listings.json", "market_summary.json")
-    }
 
 
 def report_number(output: str, label: str) -> int:
@@ -56,15 +44,105 @@ def report_number(output: str, label: str) -> int:
 
 
 EXPECTED_LISTINGS = [
-    {"city": "ottawa", "fsa": "K1A", "price": 650000, "beds": 4, "baths": 3, "sqft": 1700, "seen": "2026-09-01"},
-    {"city": "ottawa", "fsa": "K1A", "price": 500000, "beds": 3, "baths": 2, "sqft": 1400, "seen": "2026-09-01"},
-    {"city": "ottawa", "fsa": "K1P", "price": 250000, "beds": None, "baths": 2, "sqft": None, "seen": "2026-09-01"},
-    {"city": "toronto", "fsa": "M5C", "price": 5000000, "beds": None, "baths": None, "sqft": None, "seen": "2026-09-04"},
-    {"city": "toronto", "fsa": "M5X", "price": 2000000, "beds": 3, "baths": 2, "sqft": None, "seen": "2026-09-04"},
-    {"city": "toronto", "fsa": "M4N", "price": 1200000, "beds": 3, "baths": 2, "sqft": 1100, "seen": "2026-09-02"},
-    {"city": "toronto", "fsa": "M5H", "price": 950000, "beds": 2, "baths": 2, "sqft": 850, "seen": "2026-09-05"},
-    {"city": "toronto", "fsa": "M5V", "price": 800000, "beds": None, "baths": None, "sqft": None, "seen": "2026-09-03"},
-    {"city": "toronto", "fsa": None, "price": 700000, "beds": 1, "baths": 1, "sqft": None, "seen": "2026-09-03"},
+    {
+        "city": "ottawa",
+        "fsa": "K1A",
+        "price": 650000,
+        "beds": 4,
+        "baths": 3,
+        "sqft": 1700,
+        "seen": "2026-09-01",
+        "address": "2 Bank St, Ottawa, ON K1A 0B1",
+        "url": "https://example.com/o2",
+    },
+    {
+        "city": "ottawa",
+        "fsa": "K1A",
+        "price": 500000,
+        "beds": 3,
+        "baths": 2,
+        "sqft": 1400,
+        "seen": "2026-09-01",
+        "address": "1 Wellington St, Ottawa, ON K1A 0A9",
+        "url": "https://example.com/o1",
+    },
+    {
+        "city": "ottawa",
+        "fsa": "K1P",
+        "price": 250000,
+        "beds": None,
+        "baths": 2,
+        "sqft": None,
+        "seen": "2026-09-01",
+        "address": "4 Sparks St, Ottawa, ON K1P 5A5",
+        "url": "https://example.com/o4",
+    },
+    {
+        "city": "toronto",
+        "fsa": "M5C",
+        "price": 5000000,
+        "beds": None,
+        "baths": None,
+        "sqft": None,
+        "seen": "2026-09-04",
+        "address": "90 Queen St E, Toronto, ON M5C 1S6",
+        "url": "https://example.com/t9",
+    },
+    {
+        "city": "toronto",
+        "fsa": "M5X",
+        "price": 2000000,
+        "beds": 3,
+        "baths": 2,
+        "sqft": None,
+        "seen": "2026-09-04",
+        "address": "100 King St W, Toronto, ON M5X 1A9",
+        "url": "https://example.com/t10",
+    },
+    {
+        "city": "toronto",
+        "fsa": "M4N",
+        "price": 1200000,
+        "beds": 3,
+        "baths": 2,
+        "sqft": 1100,
+        "seen": "2026-09-02",
+        "address": "20 Queen St, Toronto, ON M4N 2G7",
+        "url": "https://example.com/t2",
+    },
+    {
+        "city": "toronto",
+        "fsa": "M5H",
+        "price": 950000,
+        "beds": 2,
+        "baths": 2,
+        "sqft": 850,
+        "seen": "2026-09-05",
+        "address": "10 King St W, Toronto, ON M5H 1A1",
+        "url": "https://example.com/t1",
+    },
+    {
+        "city": "toronto",
+        "fsa": "M5V",
+        "price": 800000,
+        "beds": None,
+        "baths": None,
+        "sqft": None,
+        "seen": "2026-09-03",
+        "address": "50 Spadina Ave, Toronto, ON M5V 2K7",
+        "url": "https://example.com/t5",
+    },
+    {
+        "city": "toronto",
+        "fsa": None,
+        "price": 700000,
+        "beds": 1,
+        "baths": 1,
+        "sqft": None,
+        "seen": "2026-09-03",
+        "address": "70 Bloor St W, Toronto, ON",
+        "url": "https://example.com/t7",
+    },
 ]
 
 
@@ -100,13 +178,15 @@ class PipelineEndToEnd(unittest.TestCase):
         self.assertEqual(report_number(out, "implausible sqft (nulled)"), 2)
         self.assertEqual(report_number(out, "cities"), 2)
 
-    def test_listings_sanitized_sorted_and_transformed(self):
+    def test_listings_sorted_and_transformed(self):
         self.assertEqual(self.listings, EXPECTED_LISTINGS)
         for row in self.listings:
             self.assertEqual(
                 set(row),
-                {"city", "fsa", "price", "beds", "baths", "sqft", "seen"},
+                {"city", "fsa", "price", "beds", "baths", "sqft", "seen", "address", "url"},
             )
+            self.assertTrue(row["address"])
+            self.assertTrue(row["url"])
 
     def test_dedupe_keeps_newest_timestamp(self):
         t1 = [row for row in self.listings if row["city"] == "toronto" and row["price"] in (900000, 950000)]
@@ -183,101 +263,6 @@ class PipelineEndToEnd(unittest.TestCase):
             proc = run_pipeline(out, source=source)
             self.assertEqual(proc.returncode, 2)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me")
-
-
-class EnrichedOutput(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        base = Path(cls.tmp.name)
-        cls.plain_out = base / "plain"
-        cls.enriched_out = base / "enriched"
-        cls.enriched_path = base / "listings_enriched.json"
-        cls.digests_before = data_digests()
-        cls.plain = run_pipeline(cls.plain_out)
-        cls.enriched_run = run_pipeline(cls.enriched_out, enriched_out=cls.enriched_path)
-        cls.digests_after = data_digests()
-        cls.listings = json.loads((cls.plain_out / "listings.json").read_text(encoding="utf-8"))
-        cls.enriched = json.loads(cls.enriched_path.read_text(encoding="utf-8"))
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
-    def test_runs_succeed(self):
-        self.assertEqual(self.plain.returncode, 0, self.plain.stderr)
-        self.assertEqual(self.enriched_run.returncode, 0, self.enriched_run.stderr)
-
-    def test_sanitized_output_identical_with_and_without_flag(self):
-        for name in ("listings.json", "market_summary.json"):
-            self.assertEqual(
-                (self.enriched_out / name).read_bytes(),
-                (self.plain_out / name).read_bytes(),
-                name,
-            )
-
-    def test_row_count_parity_and_enriched_fields(self):
-        self.assertEqual(len(self.enriched), len(self.listings))
-        for row in self.enriched:
-            self.assertEqual(
-                set(row),
-                {"city", "fsa", "price", "beds", "baths", "sqft", "seen", "listing_id", "url", "address"},
-            )
-
-    def test_enriched_rows_map_one_to_one_onto_sanitized(self):
-        stripped = [{field: row[field] for field in MODULE.SANITIZED_FIELDS} for row in self.enriched]
-        self.assertEqual(stripped, self.listings)
-
-    def test_enriched_carries_deduped_source_url_and_address(self):
-        by_price = {row["price"]: row for row in self.enriched}
-        deduped = by_price[950000]  # T1; the newest scraped_at wins dedupe
-        self.assertEqual(deduped["listing_id"], "T1")
-        self.assertEqual(deduped["url"], "https://example.com/t1")
-        self.assertEqual(deduped["address"], "10 King St W, Toronto, ON M5H 1A1")
-        self.assertTrue(all(row["url"] and row["address"] for row in self.enriched))
-
-    def test_plain_run_writes_no_enriched_file(self):
-        self.assertFalse((self.plain_out / "listings_enriched.json").exists())
-
-    def test_data_dir_untouched(self):
-        self.assertEqual(self.digests_before, self.digests_after)
-
-
-class EnrichedOutGuard(unittest.TestCase):
-    def test_refuses_enriched_path_inside_sanitized_output_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "data"
-            enriched = out / "listings_enriched.json"
-            proc = run_pipeline(out, enriched_out=enriched)
-            self.assertEqual(proc.returncode, 2)
-            self.assertIn("output/", proc.stderr)
-            self.assertFalse(enriched.exists())
-            self.assertFalse((out / "listings.json").exists())
-
-    def test_refuses_enriched_path_equal_to_sanitized_output_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "data"
-            proc = run_pipeline(out, enriched_out=out)
-            self.assertEqual(proc.returncode, 2)
-            self.assertIn("output/", proc.stderr)
-
-    def test_refuses_case_variant_inside_sanitized_output_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "caseout"
-            enriched = Path(tmp) / "CASEOUT" / "listings_enriched.json"
-            proc = run_pipeline(out, enriched_out=enriched)
-            self.assertEqual(proc.returncode, 2)
-            self.assertIn("output/", proc.stderr)
-            self.assertFalse(enriched.exists())
-            self.assertFalse((out / "listings.json").exists())
-
-    def test_allows_tmp_dir_enriched_path_outside_sanitized_output_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            enriched = base / "output" / "listings_enriched.json"
-            proc = run_pipeline(base / "data", enriched_out=enriched)
-            self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertTrue(enriched.is_file())
 
 
 class PureHelpers(unittest.TestCase):
@@ -365,13 +350,6 @@ class PureHelpers(unittest.TestCase):
         self.assertFalse(MODULE.DEFAULT_SOURCE.is_absolute())
         self.assertNotIn("/Users/", str(MODULE.DEFAULT_SOURCE))
         self.assertEqual(str(MODULE.DEFAULT_SOURCE), "../property-scraper/data/regions")
-
-    def test_is_within(self):
-        self.assertTrue(MODULE.is_within(Path("/tmp/x/data/listings_enriched.json"), Path("/tmp/x/data")))
-        self.assertTrue(MODULE.is_within(Path("/tmp/x/data"), Path("/tmp/x/data")))
-        self.assertTrue(MODULE.is_within(Path("/tmp/x/DATA/listings_enriched.json"), Path("/tmp/x/data")))
-        self.assertFalse(MODULE.is_within(Path("/tmp/x/output/listings_enriched.json"), Path("/tmp/x/data")))
-        self.assertFalse(MODULE.is_within(Path("/tmp/x/data-other/listings_enriched.json"), Path("/tmp/x/data")))
 
 
 if __name__ == "__main__":

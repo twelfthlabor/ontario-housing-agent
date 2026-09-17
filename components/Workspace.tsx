@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { CitySummary, MarketSummary } from "@/lib/types";
 import Chat from "./Chat";
+import DataTable from "./DataTable";
 import Icon from "./Icon";
 import MapCanvas from "./MapCanvas";
 import { cityName, compactMoney, money } from "./format";
@@ -43,13 +44,13 @@ function paramPair(params: Params, cities: string[]): [string, string] {
   return ["toronto", "ottawa"];
 }
 
-type Props = { summary: MarketSummary; offline: boolean; enriched?: boolean };
+type Props = { summary: MarketSummary; offline: boolean };
 
-export default function Workspace({ summary, offline, enriched = false }: Props) {
+export default function Workspace({ summary, offline }: Props) {
   const cities = Object.keys(summary.cities);
   const searchParams = useSearchParams();
   const [selected, setSelected] = useState(() => paramCity(searchParams, cities));
-  const [view, setView] = useState<"explore" | "compare">("explore");
+  const [view, setView] = useState<"explore" | "compare" | "data">(() => (searchParams.get("view") === "data" ? "data" : "explore"));
   const [mobileView, setMobileView] = useState<"map" | "list">(() => (searchParams.get("tab") === "cities" ? "list" : "map"));
   const [query, setQuery] = useState("");
   const [ceiling, setCeiling] = useState(() => paramCeiling(searchParams));
@@ -96,9 +97,10 @@ export default function Workspace({ summary, offline, enriched = false }: Props)
     set("sort", sort === "featured" ? null : sort);
     set("max", ceiling === DEFAULT_CEILING ? null : String(ceiling));
     set("tab", mobileView === "map" ? null : "cities");
+    set("view", view === "data" ? "data" : null);
     const query = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
-  }, [selected, pair, sort, ceiling, mobileView]);
+  }, [selected, pair, sort, ceiling, mobileView, view]);
 
   function selectCity(city: string) {
     setSelected(city);
@@ -126,6 +128,7 @@ export default function Workspace({ summary, offline, enriched = false }: Props)
       <nav className="workspace-nav" aria-label="Workspace view">
         <button aria-pressed={view === "explore"} onClick={() => { setView("explore"); setMobileView("map"); }}><Icon name="map" />Explore</button>
         <button aria-pressed={view === "compare"} onClick={() => { setView("compare"); setMobileView("map"); }}><Icon name="compare" />Compare<span className="nav-count">2</span></button>
+        <button aria-pressed={view === "data"} onClick={() => { setView("data"); setMobileView("map"); }}><Icon name="database" />Data</button>
       </nav>
       <div className="header-actions"><button className="about-button" aria-label="About this dataset" onClick={() => aboutDialog.current?.showModal()}><Icon name="info" /></button><button className="agent-trigger" aria-label="Ask the agent" onClick={() => ask()}><span className="agent-orb" aria-hidden="true" />Ask the agent<Icon name="arrow" /></button></div>
     </header>
@@ -145,7 +148,7 @@ export default function Workspace({ summary, offline, enriched = false }: Props)
         <div className="index-footer"><span className="sample-dot" /><span><strong>{summary.totals.rows.toLocaleString("en-CA")} listings</strong> in the sample<small>Built {built} · Asking prices in CAD</small></span><button className="index-about" aria-label="About this dataset" onClick={() => aboutDialog.current?.showModal()}><Icon name="info" /></button>{activeFilter ? <button onClick={() => { setQuery(""); setCeiling(2_000_000); }} aria-label="Clear city filters"><Icon name="close" /></button> : null}</div>
       </aside>
 
-      <section className="atlas-main" aria-label={view === "explore" ? "Ontario housing map" : "City comparison"}>
+      <section className="atlas-main" aria-label={view === "explore" ? "Ontario housing map" : view === "compare" ? "City comparison" : "Source data"}>
         {view === "explore" ? <MapCanvas cities={summary.cities} visible={visible} selected={selected} compared={pair} onSelect={selectCity}>
           {visible.includes(selected) ? <section className="city-tray" aria-label={`${cityName(selected)} city details`}>
             <div className="tray-heading"><span className="micro-label"><span className="selection-dot" />SELECTED CITY</span><span className="tray-tabs" role="group" aria-label="City details view"><button aria-pressed={detailView === "overview"} onClick={() => setDetailView("overview")} aria-label="City overview"><Icon name="list" /></button><button aria-pressed={detailView === "beds"} onClick={() => setDetailView("beds")} aria-label="Bedroom prices"><Icon name="chart" /></button></span></div>
@@ -153,18 +156,18 @@ export default function Workspace({ summary, offline, enriched = false }: Props)
             {detailView === "overview" ? <div className="tray-content" key={`${selected}-overview`}><p className="tray-price">{money(snap.medianPrice)}<span>median asking price</span></p><div className="tray-stats"><span><strong>{snap.count.toLocaleString("en-CA")}</strong>sampled listings</span><span><strong>{Math.round(snap.shareUnder1M * 100)}%</strong>asking under $1m</span></div></div> : <div className="tray-content tray-bedrooms" key={`${selected}-beds`}><p>Median asking price by bedroom count</p>{Object.entries(snap.medianByBeds).map(([bed, price]) => <div key={bed}><span>{bed} bed</span><span className="mini-track"><i style={{ width: `${price === null ? 0 : price / Math.max(...Object.values(snap.medianByBeds).map(value => value ?? 0)) * 100}%` }} /></span><strong>{price === null ? "No data" : compactMoney(price)}</strong></div>)}</div>}
             <div className="tray-actions"><button onClick={() => compareCity(selected)}><Icon name="compare" />Compare</button><button onClick={() => ask(`Give me a market snapshot of ${cityName(selected)}`)}>Ask about this city<Icon name="arrow" /></button></div>
           </section> : <div className="map-filter-message"><strong>{visible.length ? "Choose a city to explore." : "No cities match your filters."}</strong><span>Select a visible map marker or clear your search.</span><button onClick={() => { setQuery(""); setCeiling(2_000_000); }}>Clear filters</button></div>}
-        </MapCanvas> : <Comparison cities={summary.cities} pair={pair} setPair={setPair} onAsk={() => ask(`Compare ${cityName(pair[0])} and ${cityName(pair[1])}`)} />}
+        </MapCanvas> : view === "compare" ? <Comparison cities={summary.cities} pair={pair} setPair={setPair} onAsk={() => ask(`Compare ${cityName(pair[0])} and ${cityName(pair[1])}`)} /> : <DataTable cities={cities} city={selected} onCityChange={setSelected} totalRows={summary.totals.rows} />}
       </section>
-      <div className="mobile-view-switch" role="group" aria-label="Mobile explorer view"><button aria-pressed={mobileView === "map"} onClick={() => setMobileView("map")}><Icon name="map" />{view === "compare" ? "Comparison" : "Map"}</button><button aria-pressed={mobileView === "list"} onClick={() => setMobileView("list")}><Icon name="list" />Cities</button></div>
+      <div className="mobile-view-switch" role="group" aria-label="Mobile explorer view"><button aria-pressed={mobileView === "map" && view !== "data"} onClick={() => { if (view === "data") setView("explore"); setMobileView("map"); }}><Icon name="map" />{view === "compare" ? "Comparison" : "Map"}</button><button aria-pressed={mobileView === "list"} onClick={() => setMobileView("list")}><Icon name="list" />Cities</button><button aria-pressed={view === "data" && mobileView === "map"} onClick={() => { setView("data"); setMobileView("map"); }}><Icon name="database" />Data</button></div>
     </main>
 
     <dialog className="agent-dialog" ref={agentDialog} aria-label="Housing research assistant" onClick={event => { if (event.target === event.currentTarget) agentDialog.current?.close(); }}>
       <div className="dialog-top"><span><span className="agent-orb" />Housing research</span><button aria-label="Close agent" onClick={() => agentDialog.current?.close()}><Icon name="close" /></button></div>
-      <Chat offline={offline} draft={draft} enriched={enriched} />
+      <Chat offline={offline} draft={draft} />
     </dialog>
     <dialog className="about-dialog" ref={aboutDialog} aria-labelledby="about-title" onClick={event => { if (event.target === event.currentTarget) aboutDialog.current?.close(); }}>
       <div className="dialog-top"><span>About the atlas</span><button aria-label="Close dataset information" onClick={() => aboutDialog.current?.close()}><Icon name="close" /></button></div>
-      <div className="about-content"><p className="micro-label">ONTARIO HOUSING AGENT</p><h2 id="about-title">A sample of what’s asking.</h2><p>Explore {summary.totals.rows.toLocaleString("en-CA")} sanitized for-sale listings across {cities.length} Ontario cities. Prices are asking prices in Canadian dollars; they are not sale prices or valuations.</p><dl><div><dt>Sample built</dt><dd>{new Date(summary.generated_at).toLocaleDateString("en-CA", { dateStyle: "long", timeZone: "UTC" })} UTC</dd></div><div><dt>Source</dt><dd>Zillow research sample</dd></div><div><dt>Coverage</dt><dd>Varies by city. This is not the entire market.</dd></div></dl><p>{enriched ? "This local run uses enriched rows, so cards can show the address and link to the source listing. The public demo ships sanitized rows with addresses and listing IDs removed." : "Addresses and listing IDs have been removed."} Map points locate cities, not properties. The agent’s numbers come from searches and statistics over this sample.</p>{offline ? <p className="about-offline">Offline demo: answers are scripted. Budget filters and follow-up reasoning require the live model.</p> : null}<p className="about-legal">Not affiliated with Zillow, REALTOR.ca, or any brokerage. Not financial or investment advice. Geography: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a> and <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> (CC BY).</p></div>
+      <div className="about-content"><p className="micro-label">ONTARIO HOUSING AGENT</p><h2 id="about-title">A sample of what’s asking.</h2><p>Explore {summary.totals.rows.toLocaleString("en-CA")} for-sale listings across {cities.length} Ontario cities. This is a research sample of public for-sale listing data. Prices are asking prices in Canadian dollars, not sale prices or valuations.</p><dl><div><dt>Sample built</dt><dd>{new Date(summary.generated_at).toLocaleDateString("en-CA", { dateStyle: "long", timeZone: "UTC" })} UTC</dd></div><div><dt>Source</dt><dd>Zillow research sample</dd></div><div><dt>Coverage</dt><dd>Varies by city. This is not the entire market.</dd></div></dl><p>Each card links to the source listing. Map points locate cities, not properties. The agent’s numbers come from searches and statistics over this sample.</p>{offline ? <p className="about-offline">Offline demo: answers are scripted. Budget filters and follow-up reasoning require the live model.</p> : null}<p className="about-legal">Not affiliated with Zillow, REALTOR.ca, or any brokerage. Not financial or investment advice. Geography: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a> and <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> (CC BY).</p></div>
     </dialog>
   </div>;
 }

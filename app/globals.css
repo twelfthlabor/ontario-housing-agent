@@ -204,6 +204,21 @@ button { background: none; border: 0; }
 .comparison-footer { display: flex; align-items: center; gap: 20px; justify-content: space-between; margin-top: 23px; padding-top: 20px; border-top: 1px solid #dce2d3; }
 .comparison-footer p { max-width: 290px; font-size: 10px; color: #8b957e; line-height: 1.7; }
 .comparison-footer .agent-trigger { font-size: 10px; padding: 10px 12px; }
+.data-view { height: 100%; min-width: 0; display: flex; flex-direction: column; background: #f3f4ed; padding: 34px 50px 26px; }
+.data-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.data-heading h1 { font-size: 34px; font-weight: 500; letter-spacing: -1.4px; margin-top: 11px; }
+.data-city { display: flex; align-items: center; gap: 9px; font-size: 10px; color: var(--muted); padding-bottom: 3px; }
+.data-city select { border: 1px solid #d8ded0; background: #fff; border-radius: 6px; padding: 8px 10px; font-size: 12px; min-width: 170px; cursor: pointer; }
+.data-meta { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 20px 0 10px; padding-top: 15px; border-top: 1px solid #dce2d3; font-size: 10px; color: #89917f; }
+.data-meta a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.data-scroll { flex: 1; min-height: 0; overflow: auto; background: #fff; border: 1px solid #dce2d3; border-radius: 8px; }
+.data-table { border-collapse: collapse; min-width: 100%; font-size: 11px; }
+.data-table th, .data-table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eef0e8; white-space: nowrap; }
+.data-table thead th { position: sticky; top: 0; z-index: 1; background: #f6f7f1; font: 9px var(--mono); letter-spacing: .7px; text-transform: uppercase; color: var(--muted); }
+.data-table tbody tr:hover { background: #f8f9f4; }
+.data-table .data-price { font-family: var(--mono); }
+.data-table .data-address { white-space: normal; min-width: 190px; }
+.data-table a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
 dialog { color: var(--ink); border: 1px solid #d6dbcf; padding: 0; background: var(--paper); box-shadow: 0 15px 80px #1f31202b; }
 dialog::backdrop { background: #26352325; backdrop-filter: blur(3px); }
 dialog[open] { animation: dialog-enter 220ms var(--ease); }
@@ -218,7 +233,6 @@ dialog[open] { animation: dialog-enter 220ms var(--ease); }
 .new-chat { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #7e8b70; padding: 4px 0; }
 .new-chat svg { width: 13px; height: 13px; }
 .demo-notice { font-size: 10px; line-height: 1.7; color: #919987; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
-.enriched-notice { margin-bottom: 14px; padding: 8px 10px; border-radius: 6px; background: #eef2e5; font-size: 10px; line-height: 1.7; color: #7d8a6d; }
 .messages { flex: 1; min-height: 80px; overflow-y: auto; padding: 20px 0; display: flex; flex-direction: column; gap: 21px; scrollbar-width: thin; scrollbar-color: #d6decc transparent; overscroll-behavior: contain; }
 .chat-empty { margin: auto; text-align: center; padding: 25px 0; }
 .chat-empty-mark { display: inline-grid; place-items: center; width: 39px; height: 39px; border: 1px solid #d7dfcb; border-radius: 11px; color: #83956e; background: #eef2e5; transform: rotate(-5deg); margin-bottom: 20px; }
@@ -302,6 +316,7 @@ dialog[open] { animation: dialog-enter 220ms var(--ease); }
   .map-region-control button { padding-inline: 7px; font-size: 9px; }
   .city-tray { width: 280px; right: 18px; padding: 15px 18px; }
   .comparison-view { padding: 30px; }
+  .data-view { padding: 30px; }
   .comparison-selectors { gap: 22px; }
   .comparison-selectors > div + div { padding-left: 22px; }
   .comparison-price { font-size: 21px; }
@@ -377,6 +392,12 @@ dialog[open] { animation: dialog-enter 220ms var(--ease); }
   .mobile-view-switch button[aria-pressed="true"] { background: var(--ink); color: white; }
   .mobile-view-switch svg { width: 13px; height: 13px; }
   .comparison-view { padding: 26px 22px 85px; }
+  .data-view { padding: 20px 18px 80px; }
+  .data-heading { flex-direction: column; align-items: stretch; gap: 14px; }
+  .data-heading h1 { font-size: 27px; letter-spacing: -1px; }
+  .data-city { justify-content: space-between; padding-bottom: 0; }
+  .data-city select { flex: 1; min-width: 0; max-width: 210px; }
+  .data-meta { flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 14px; }
   .comparison-heading h1 { font-size: 33px; }
   .comparison-heading > svg { width: 35px; }
   .comparison-selectors { gap: 15px; }

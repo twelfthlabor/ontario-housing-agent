@@ -58,6 +58,8 @@ type EvalCase = {
   question: string;
   expect: { tool: string | null; args?: Record<string, unknown>; no_tool?: boolean };
   checks: Check[];
+  /** Recognition subject for the structural refusal check (scope_refusal cases). */
+  limitation?: string;
   rationale?: string;
 };
 
@@ -177,6 +179,9 @@ function loadCases(): EvalCase[] {
     if (typeof parsed.expect.tool !== "string" && parsed.expect.tool !== null) {
       throw new Error(`evals/cases.jsonl line ${index + 1}: expect.tool must be a string or null`);
     }
+    if (parsed.category === "scope_refusal" && typeof parsed.limitation !== "string") {
+      throw new Error(`evals/cases.jsonl line ${index + 1}: scope_refusal case needs a limitation regex`);
+    }
     cases.push(parsed as EvalCase);
   }
   return cases;
@@ -294,7 +299,7 @@ function numericMatches(expected: number, unit: Unit, nums: Extracted[]): boolea
   return nums.some((n) => n.kind !== "percent" && Math.abs(n.value - expected) <= tolerance);
 }
 
-function collectGroundTruth(value: unknown, into: number[]): void {
+export function collectGroundTruth(value: unknown, into: number[]): void {
   if (typeof value === "number" && Number.isFinite(value)) {
     into.push(value);
     if (value > 0 && value <= 1) into.push(value * 100); // shares quoted as percentages
@@ -314,7 +319,11 @@ function collectGroundTruth(value: unknown, into: number[]): void {
     if (typeof record.shareUnder1M === "number" && Number.isFinite(record.shareUnder1M)) {
       into.push(1_000_000);
     }
-    for (const item of Object.values(record)) collectGroundTruth(item, into);
+    for (const [key, item] of Object.entries(record)) {
+      // Postal digits, street numbers and zpid strings are not price evidence.
+      if (key === "address" || key === "url") continue;
+      collectGroundTruth(item, into);
+    }
   }
 }
 
@@ -380,16 +389,50 @@ export function expectedArgsFailure(
   return null;
 }
 
-type RefusalResult = { failures: string[]; matched?: string };
+type RefusalResult = { failures: string[]; matched?: string; structural?: boolean };
 
-function evaluateRefusal(check: Extract<Check, { type: "refusal" }>, answer: string, grounded: number[]): RefusalResult {
+/** Shared decline-marker family for the structural refusal check. */
+const DECLINE_MARKER_SOURCE =
+  "\\b(can't|cannot|can not|unable|not able|won't|will not|does not|doesn't|do not|don't|no|only)\\b";
+
+/**
+ * Structural decline: a decline marker and the case's limitation subject within
+ * 100 characters of each other, in either order. Complements the phrase patterns
+ * so a correct decline with new wording does not need a new regex per run.
+ */
+function structuralDecline(haystack: string, limitation: string): boolean {
+  const spans = (regex: RegExp): Array<[number, number]> =>
+    [...haystack.matchAll(regex)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  const markers = spans(new RegExp(DECLINE_MARKER_SOURCE, "gi"));
+  const subjects = spans(new RegExp(limitation, "gi"));
+  for (const [markerStart, markerEnd] of markers) {
+    for (const [subjectStart, subjectEnd] of subjects) {
+      const gap =
+        markerStart >= subjectEnd
+          ? markerStart - subjectEnd
+          : subjectStart >= markerEnd
+            ? subjectStart - markerEnd
+            : 0; // overlapping counts as adjacent
+      if (gap <= 100) return true;
+    }
+  }
+  return false;
+}
+
+function evaluateRefusal(
+  check: Extract<Check, { type: "refusal" }>,
+  answer: string,
+  grounded: number[],
+  limitation?: string,
+): RefusalResult {
   const failures: string[] = [];
   // Fold typographic apostrophes to ASCII and treat hyphens as spaces so phrase
   // patterns match "sold price", "sold-price" and "sold\u2011price" alike.
   const haystack = answer.replace(/[\u2018\u2019]/g, "'").replace(/[\u2010\u2011-]/g, " ");
   const patterns = check.patterns.map((pattern) => new RegExp(pattern, "i"));
   const matched = patterns.find((pattern) => pattern.test(haystack));
-  if (!matched) failures.push("no refusal phrase matched");
+  const structural = !matched && Boolean(limitation) && structuralDecline(haystack, limitation as string);
+  if (!matched && !structural) failures.push("no refusal phrase matched");
 
   for (const raw of check.forbid ?? []) {
     if (new RegExp(raw, "i").test(haystack)) failures.push(`forbidden phrase /${raw}/`);
@@ -403,7 +446,7 @@ function evaluateRefusal(check: Extract<Check, { type: "refusal" }>, answer: str
   });
   for (const number of ungrounded.slice(0, 3)) failures.push(`ungrounded number "${number.raw.trim()}"`);
 
-  return { failures, matched: matched?.source };
+  return { failures, matched: matched?.source, structural };
 }
 
 async function runAgentCase(c: EvalCase, provider: Provider): Promise<RunOutcome> {
@@ -456,20 +499,32 @@ export function evaluateCaseOutcome(c: EvalCase, outcome: RunOutcome): { passed:
   if (!outcome.answer) failures.push("empty answer");
 
   if (outcome.answer) {
-    const first = outcome.toolEvents[0];
-
     if (c.category === "tool_choice") {
+      // A tool-limit/budget notice is the loop giving up, not an answer.
+      if (/\b(tool limit|budget exhausted|reached the tool)\b/i.test(outcome.answer)) {
+        failures.push("hollow turn: tool-limit or budget notice instead of an answer");
+      }
       if (c.expect.no_tool) {
-        if (first) failures.push(`no_tool expected, got ${first.name}`);
+        if (outcome.toolEvents.length > 0) failures.push(`no_tool expected, got ${outcome.toolEvents[0].name}`);
         else notes.push("no tool (as expected)");
       } else if (c.expect.tool) {
-        if (!first) failures.push(`tool: expected ${c.expect.tool}, no tool called`);
-        else if (first.name !== c.expect.tool) failures.push(`tool: expected ${c.expect.tool}, got ${first.name}`);
-        else {
-          const args = JSON.stringify(first.args);
-          const argFailure = expectedArgsFailure(c.expect.args, first.args);
-          if (argFailure) failures.push(`tool args: ${argFailure}`);
-          else notes.push(`tool ${first.name}${args !== "{}" ? ` ${args.slice(0, 100)}` : ""}`);
+        const named = outcome.toolEvents.filter((event) => event.name === c.expect.tool);
+        if (outcome.toolEvents.length === 0) failures.push(`tool: expected ${c.expect.tool}, no tool called`);
+        else if (named.length === 0) {
+          failures.push(
+            `tool: expected ${c.expect.tool}, got ${outcome.toolEvents.map((event) => event.name).join(", ")}`,
+          );
+        } else {
+          // Any call to the expected tool may satisfy expect.args, not just the first.
+          const passing = named.find((event) => expectedArgsFailure(c.expect.args, event.args) === null);
+          if (passing) {
+            const args = JSON.stringify(passing.args);
+            notes.push(`tool ${passing.name}${args !== "{}" ? ` ${args.slice(0, 100)}` : ""}`);
+          } else {
+            failures.push(
+              `tool args: ${expectedArgsFailure(c.expect.args, named[0].args) ?? "no call satisfied expect.args"}`,
+            );
+          }
         }
       }
     }
@@ -491,9 +546,15 @@ export function evaluateCaseOutcome(c: EvalCase, outcome: RunOutcome): { passed:
         if (ok) notes.push(`matched ${formatValue(resolved.value, unit)} (${resolved.label})`);
         else failures.push(`numeric: expected ${formatValue(resolved.value, unit)} (${resolved.label}) not found`);
       } else if (check.type === "refusal") {
-        const result = evaluateRefusal(check, outcome.answer, outcome.grounded);
+        const result = evaluateRefusal(check, outcome.answer, outcome.grounded, c.limitation);
         failures.push(...result.failures);
-        if (result.failures.length === 0) notes.push(`refused (pattern: ${result.matched ?? "?"})`);
+        if (result.failures.length === 0) {
+          notes.push(
+            result.matched
+              ? `refused (pattern: ${result.matched})`
+              : "refused (structural: decline marker + limitation subject)",
+          );
+        }
       }
     }
   }

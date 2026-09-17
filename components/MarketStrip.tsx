@@ -20,7 +20,7 @@ export default function MarketStrip() {
     {
       label: "sample listings",
       value: typeof total === "number" ? total.toLocaleString("en-CA") : "n/a",
-      title: "Listings in the sanitized sample",
+      title: "Listings in the research sample",
     },
     {
       label: "Ontario cities",

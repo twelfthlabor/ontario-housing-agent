@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFallbackProvider, createGeminiProvider, createGroqProvider } from "../lib/providers";
-import type { Provider, ProviderEvent } from "../lib/providers";
+import {
+  createFallbackProvider,
+  createGeminiProvider,
+  createGroqProvider,
+  createMockProvider,
+} from "../lib/providers";
+import type { ChatMessage, Provider, ProviderEvent } from "../lib/providers";
 
 async function collect(provider: Provider) {
   const events: ProviderEvent[] = [];
@@ -10,9 +15,66 @@ async function collect(provider: Provider) {
   return events;
 }
 
+async function collectFrom(provider: Provider, messages: ChatMessage[]) {
+  const events: ProviderEvent[] = [];
+  for await (const event of provider.stream(messages, [])) {
+    events.push(event);
+  }
+  return events;
+}
+
+function textOf(events: ProviderEvent[]): string {
+  return events.map((event) => (event.type === "text" ? event.delta : "")).join("");
+}
+
+function searchResultMessage(payload: unknown): ChatMessage {
+  return { role: "tool", name: "search_listings", content: JSON.stringify(payload) };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+describe("mock provider", () => {
+  it("includes the cheapest listing's address and source URL in a search answer", async () => {
+    const events = await collectFrom(createMockProvider(), [
+      { role: "user", content: "Cheapest 2-bedroom in Kitchener?" },
+      searchResultMessage({
+        totalMatches: 2,
+        returned: 2,
+        listings: [
+          { city: "kitchener", price: 512_000, beds: 3, address: "9 Second St", url: "https://example.test/second" },
+          { city: "kitchener", price: 401_000, beds: 2, address: "1 First St", url: "https://example.test/first" },
+        ],
+      }),
+    ]);
+    const text = textOf(events);
+    expect(text).toContain("1 First St");
+    expect(text).toContain("https://example.test/first");
+    expect(text).not.toContain("9 Second St");
+    expect(text).not.toContain("https://example.test/second");
+  });
+
+  it("omits address and URL when the tool result carries none", async () => {
+    const events = await collectFrom(createMockProvider(), [
+      { role: "user", content: "Cheapest 2-bedroom in Kitchener?" },
+      searchResultMessage({
+        totalMatches: 1,
+        returned: 1,
+        listings: [{ city: "kitchener", price: 401_000, beds: 2 }],
+      }),
+    ]);
+    const text = textOf(events);
+    expect(text).toContain("$401,000");
+    expect(text).not.toMatch(/undefined|null/);
+  });
+
+  it("answers off-sample questions without calling the sample sanitized", async () => {
+    const text = textOf(await collect(createMockProvider()));
+    expect(text).toContain("Ontario");
+    expect(text.toLowerCase()).not.toContain("sanitized");
+  });
 });
 
 describe("provider configuration and fallback", () => {

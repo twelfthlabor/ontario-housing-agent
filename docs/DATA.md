@@ -9,9 +9,9 @@ Raw listings come from the separate `property-scraper` project, treated as
 read-only here: per-city CSVs of current listings at
 `../property-scraper/data/regions/<city>/listings.csv`.
 
-The build covers 36 Ontario cities and produces roughly 20,000 rows after
-cleaning. The published sample contains no addresses, URLs, agent names, or
-listing ids.
+The build covers 36 Ontario cities and produces 19,356 rows after cleaning. The
+published sample includes each listing's address and a link to the source
+listing; listing ids, agent names, and scraped source pages are not published.
 
 ## Build
 
@@ -22,75 +22,72 @@ python3 pipeline/build_dataset.py
 ```
 
 The pipeline reads `../property-scraper/data/regions` by default. To point it at
-another checkout:
+another checkout, or write somewhere else:
 
 ```bash
-python3 pipeline/build_dataset.py --source ../property-scraper/data/regions
+python3 pipeline/build_dataset.py --source ../property-scraper/data/regions --out data
 ```
 
 It writes:
 
-- `data/listings.json` — sanitized listings
-- `data/market_summary.json` — per-city aggregates
-
-## Local enriched mode
-
-`--enriched-out` adds a local-only copy of the same kept rows with `listing_id`,
-`url`, and `address` reattached, for click-through while developing:
-
-```bash
-python3 pipeline/build_dataset.py --enriched-out output/listings_enriched.json
-```
-
-The row set and the 7 sanitized fields are identical to `data/listings.json`;
-the file is expected under `output/` (gitignored) and must never be tracked or
-deployed. Set `ENRICHED_DATA=1` to load it (missing file = warning plus
-sanitized fallback); unset, the app uses the tracked sanitized data.
+- `data/listings.json`: the published sample, sorted city asc / price desc
+- `data/market_summary.json`: per-city aggregates
 
 ## What is collected
 
 - Current for-sale asking listings.
 - 36 Ontario cities.
-- Roughly 20,000 rows after dedupe and filtering.
+- 19,356 rows after dedupe and filtering.
 
 ## Cleaning rules
 
 Applied during the build:
 
-1. **Dedupe** by listing id.
-2. **Price floor** — keep rows with price >= $50,000.
-3. **Ontario only** — drop rows whose address is not in Ontario.
-4. **Sane beds/baths** — drop implausible counts (bounds in
+1. **Dedupe** by listing id; the newest `scraped_at` wins. The id itself is
+   never written.
+2. **Price floor**: keep rows with price >= $50,000.
+3. **Ontario only**: drop rows whose address is not in Ontario.
+4. **Sane beds/baths**: drop implausible counts (bounds in
    `pipeline/build_dataset.py`).
-5. **Plausible sqft** — values outside 200-20,000 sqft become `null`; the row
+5. **Plausible sqft**: values outside 200-20,000 sqft become `null`; the row
    is kept. They are counted as `implausible sqft (nulled)` in the filter
    report.
    The low tail is land acreage: for vacant-land listings the feed renders
    acreage as "N sqft lot", so the scraper extracts acreage as interior area (a
    known 50-acre Innisfil landholding arrived as `sqft` 50). The high tail is
    commercial/non-residential floor area.
-6. **Extract FSA** — the Forward Sortation Area, the first three characters of
-   the postal code.
-7. **Drop identifiers** — address, URL, agent, listing id, and source page are
-   removed before writing.
+6. **Extract FSA**: the Forward Sortation Area, the first three characters of
+   the postal code in the address.
+7. **Emit nine fields**: `city`, `fsa`, `price`, `beds`, `baths`, `sqft`,
+   `seen`, `address`, `url`. Listing ids and agent names are not written;
+   scraped source pages are not published.
 
 ## Fields
-
-Kept:
 
 | Field | Notes |
 | --- | --- |
 | `city` | One of the covered cities. |
-| `fsa` | Forward Sortation Area, derived at build time. |
+| `fsa` | Forward Sortation Area, derived at build time; `null` for the 8 rows without a parseable postal code. |
 | `price` | Asking price, as listed. |
 | `beds` | Bedroom count. |
 | `baths` | Bathroom count. |
 | `sqft` | Interior area where the source lists it; `null` when missing or implausible (see cleaning rules). |
-| `seen` | Last-seen marker from the source data. |
+| `seen` | Date the source last saw the listing (ISO date). |
+| `address` | Full address as listed, including city, ON and postal code. |
+| `url` | Link to the source listing (https). |
 
-Dropped: address, URL, agent, listing id, source page.
+Not published: listing ids, agent names, scraped source pages.
 
 City lookups accept natural spellings (e.g. "St. Catharines", "Sault Ste. Marie") via normalization.
+
+## CSV export
+
+`GET /api/listings?format=csv` returns all 19,356 rows with the header
+`city,fsa,price,beds,baths,sqft,seen,address,url`. Values are quoted per
+RFC 4180 when they contain commas, quotes, or line breaks, and cells that start
+with `=`, `+`, `-`, `@`, tab, or carriage return get a leading `'` so
+spreadsheets treat them as text. The document is serialized once per server
+process and served with a one-hour browser / one-day CDN cache.
 
 ## Square footage
 
@@ -136,15 +133,15 @@ A weekly refresh is planned.
   price cuts cannot be computed. Adding that would require snapshot archiving in
   `property-scraper` (planned).
 - **Staleness.** Refreshes are manual, so the snapshot ages between builds.
-- **Identical rows.** Dedupe is by listing id only, so condo/duplicate listings
-  that are identical in every published field (city, FSA, price, beds, baths,
-  sqft, seen) remain as separate rows. In the current build, 620 rows repeat
-  another row this way, which can slightly overstate identical-looking segments.
-  This is intentional.
+- **Duplicate rows.** Dedupe is by listing id only. 620 rows still repeat another
+  row on the seven non-address fields (city, FSA, price, beds, baths, sqft,
+  seen) while differing in address/url, which can slightly overstate
+  identical-looking segments. This is intentional.
 
 ## Terms and attribution
 
-- Sanitized research sample of public for-sale listing data collected from
-  Zillow. No addresses, URLs, agent names, or listing ids are published.
+- Research sample of public for-sale listing data collected from Zillow. Addresses
+  and source links are published; listing ids, agent names, and scraped source
+  pages are not.
 - Not affiliated with, endorsed by, or sponsored by Zillow.
 - For informational use only. Not financial, legal, or real-estate advice.

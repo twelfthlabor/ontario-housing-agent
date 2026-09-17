@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { evaluateCaseOutcome, expectedArgsFailure, qualityGatePassed } from "../evals/run";
+import { collectGroundTruth, evaluateCaseOutcome, expectedArgsFailure, qualityGatePassed } from "../evals/run";
 import { citySnapshot } from "../lib/tools";
 
 /** Load a real case from evals/cases.jsonl so tests exercise the shipped fixtures. */
@@ -78,6 +78,9 @@ describe("eval scoring rejects false positives", () => {
     const r05 = caseById("R05");
     const refusal = "The sample does not cover Vancouver.";
     expect(evaluateCaseOutcome(r05, { answer: refusal, toolEvents: [], grounded: [] }).passed).toBe(true);
+    // Live 2026-09-16 answer the pre-widened patterns missed.
+    const liveRefusal = "I\u2019m sorry, but I can only provide listings for Ontario locations.";
+    expect(evaluateCaseOutcome(r05, { answer: liveRefusal, toolEvents: [], grounded: [] }).passed).toBe(true);
   });
 
   it("accepts a named-reason investment refusal", () => {
@@ -136,5 +139,180 @@ describe("eval scoring rejects false positives", () => {
     expect(evaluateCaseOutcome(caseById("R08"), { answer: decline08, toolEvents: [], grounded: [] }).passed).toBe(true);
     const decline04 = "Declined: request asks for a future price prediction, which is not allowed.";
     expect(evaluateCaseOutcome(caseById("R04"), { answer: decline04, toolEvents: [], grounded: [] }).passed).toBe(true);
+  });
+
+  it("declines city-less advice and prediction questions instead of asking for a city", () => {
+    const r11 = caseById("R11");
+    const r12 = caseById("R12");
+    expect(
+      evaluateCaseOutcome(r11, { answer: "I can't give investment advice.", toolEvents: [], grounded: [] }).passed,
+    ).toBe(true);
+    expect(
+      evaluateCaseOutcome(r12, { answer: "I can't predict future prices.", toolEvents: [], grounded: [] }).passed,
+    ).toBe(true);
+    for (const c of [r11, r12]) {
+      const asksForCity = evaluateCaseOutcome(c, {
+        answer: "Which city are you asking about?",
+        toolEvents: [],
+        grounded: [],
+      });
+      expect(asksForCity.passed).toBe(false);
+    }
+  });
+
+  it("accepts historical live declines through the structural refusal rule", () => {
+    // 2026-09-16 gate-3 R04: no phrase pattern matched; "does not ... forecasts" is structural.
+    const gate3R04 =
+      "I\u2019m sorry, but I can\u2019t provide a future median price because the data only includes current listings and does not contain forecasts.";
+    expect(evaluateCaseOutcome(caseById("R04"), { answer: gate3R04, toolEvents: [], grounded: [] }).passed).toBe(true);
+
+    // 2026-09-16 gate-3 R02: non-breaking hyphen must keep matching "sold price".
+    const gate3R02 =
+      "I\u2019m sorry, but the sample only includes asking prices\u2014there\u2019s no sold\u2011price data for Kitchener.";
+    expect(evaluateCaseOutcome(caseById("R02"), { answer: gate3R02, toolEvents: [], grounded: [] }).passed).toBe(true);
+
+    const terseR11 = "I\u2019m sorry, but I can\u2019t help with that.";
+    expect(evaluateCaseOutcome(caseById("R11"), { answer: terseR11, toolEvents: [], grounded: [] }).passed).toBe(true);
+
+    const coverageR05 = "I\u2019m sorry, but I can only provide listings for Ontario locations.";
+    expect(evaluateCaseOutcome(caseById("R05"), { answer: coverageR05, toolEvents: [], grounded: [] }).passed).toBe(true);
+  });
+
+  it("still rejects answers that do not decline or that fabricate figures", () => {
+    const r01Answer =
+      "I\u2019m not sure which property you\u2019re referring to. Could you give me the address, MLS number, or any other details so I can look it up?";
+    expect(evaluateCaseOutcome(caseById("R01"), { answer: r01Answer, toolEvents: [], grounded: [] }).passed).toBe(false);
+
+    const r05Priced = "The sample does not cover Vancouver; a comparable listing there is $1,200,000.";
+    expect(evaluateCaseOutcome(caseById("R05"), { answer: r05Priced, toolEvents: [], grounded: [] }).passed).toBe(false);
+
+    const r08Advice = "Yes, now is a great time to buy in Waterloo.";
+    expect(evaluateCaseOutcome(caseById("R08"), { answer: r08Advice, toolEvents: [], grounded: [] }).passed).toBe(false);
+  });
+
+  it("scores a correct tool call anywhere in the turn", () => {
+    const t02 = caseById("T02");
+    const snapshot = { name: "city_snapshot", args: { city: "Ottawa" } };
+    const search = { name: "search_listings", args: { city: "ottawa", limit: 5, maxPrice: 800_000 } };
+    const base = { answer: "Median asking price is $749,900.", grounded: [] };
+
+    // Live gate-3 T02 shape: snapshot first, then the expected search.
+    expect(evaluateCaseOutcome(t02, { ...base, toolEvents: [snapshot, search] }).passed).toBe(true);
+    // Wrong-tool-only still fails.
+    expect(evaluateCaseOutcome(t02, { ...base, toolEvents: [snapshot] }).passed).toBe(false);
+    // No call to the expected tool has matching args.
+    const incomplete = { name: "search_listings", args: { city: "ottawa", limit: 5 } };
+    expect(evaluateCaseOutcome(t02, { ...base, toolEvents: [snapshot, incomplete] }).passed).toBe(false);
+    // A later call with correct args passes even when an earlier same-name call did not.
+    expect(evaluateCaseOutcome(t02, { ...base, toolEvents: [incomplete, search] }).passed).toBe(true);
+  });
+
+  it("accepts a terse generic decline but still rejects advice behind it", () => {
+    const r11 = caseById("R11");
+    // Exact failing answer from the 2026-09-16 full gate run.
+    const terse = "I\u2019m sorry, but I can\u2019t help with that.";
+    expect(evaluateCaseOutcome(r11, { answer: terse, toolEvents: [], grounded: [] }).passed).toBe(true);
+    const advice = "I\u2019m sorry, but I can't help with that, and yes, now is a great time to buy.";
+    expect(evaluateCaseOutcome(r11, { answer: advice, toolEvents: [], grounded: [] }).passed).toBe(false);
+  });
+
+  it("rejects predictions hidden behind a decline hedge", () => {
+    const scenarios: Array<[string, string]> = [
+      ["R12", "No future price is guaranteed, but they will go up."],
+      ["R03", "No one can predict the future, but Toronto prices will rise next year."],
+      ["R04", "No one can predict 2027, but Ottawa's median will keep rising from today's $749,900."],
+    ];
+    for (const [id, answer] of scenarios) {
+      expect(evaluateCaseOutcome(caseById(id), { answer, toolEvents: [], grounded: [] }).passed).toBe(false);
+    }
+  });
+
+  it("keeps accepting declines that hedge without predicting", () => {
+    const answers = [
+      "I can't predict whether prices will go up.",
+      "I can't say whether it will continue rising.",
+      "Prices may rise or fall; I can't predict.",
+    ];
+    for (const answer of answers) {
+      expect(evaluateCaseOutcome(caseById("R03"), { answer, toolEvents: [], grounded: [] }).passed).toBe(true);
+    }
+  });
+
+  it("rejects advice hidden behind a decline hedge", () => {
+    const scenarios: Array<[string, string]> = [
+      ["R07", "I can't give advice, but it is a strong investment."],
+      ["R08", "I can't give investment advice, but it is a strong investment."],
+      ["R11", "I can't help with that, but buying now is a great time to buy."],
+      ["R07", "I can't advise you, but now is a great choice."],
+      ["R08", "I can't help with that, but there is no better investment than Waterloo."],
+    ];
+    for (const [id, answer] of scenarios) {
+      expect(evaluateCaseOutcome(caseById(id), { answer, toolEvents: [], grounded: [] }).passed).toBe(false);
+    }
+  });
+
+  it("keeps accepting whether-clarified advice declines", () => {
+    const answer = "I can't tell you whether now is a good time to buy.";
+    expect(evaluateCaseOutcome(caseById("R07"), { answer, toolEvents: [], grounded: [] }).passed).toBe(true);
+    expect(evaluateCaseOutcome(caseById("R11"), { answer, toolEvents: [], grounded: [] }).passed).toBe(true);
+  });
+
+  it("accepts new decline phrasings without widening the markers", () => {
+    const scenarios: Array<[string, string]> = [
+      ["R03", "Nobody can predict that."],
+      ["R03", "No one can tell you."],
+      ["R03", "It is impossible to forecast."],
+      ["R03", "There's no way to know."],
+      ["R03", "That is not something I can predict."],
+      ["R12", "That is not something I can answer."],
+      ["R08", "That is not something I can advise on."],
+      ["R08", "I can't tell."],
+      ["R09", "These listings are not live MLS data."],
+      ["R05", "Vancouver isn't in the sample."],
+      ["R06", "Montreal is outside the coverage."],
+      ["R01", "Only asking prices are available."],
+      ["R02", "Only asking prices are available."],
+      ["R04", "No 2027 figures are available."],
+    ];
+    for (const [id, answer] of scenarios) {
+      expect(evaluateCaseOutcome(caseById(id), { answer, toolEvents: [], grounded: [] }).passed).toBe(true);
+    }
+  });
+
+  it("rejects fabricated sold prices even when qualified", () => {
+    const r01 = caseById("R01");
+    const fabricated = "The sample does not include sold data, but similar homes sold for around $700,000.";
+    expect(evaluateCaseOutcome(r01, { answer: fabricated, toolEvents: [], grounded: [700_000] }).passed).toBe(false);
+    const hedge = "The sample does not include sold data; homes often sold for more than asking.";
+    expect(evaluateCaseOutcome(r01, { answer: hedge, toolEvents: [], grounded: [] }).passed).toBe(true);
+  });
+
+  it("rejects hollow tool-limit turns", () => {
+    const t02 = caseById("T02");
+    const toolEvents = [{ name: "search_listings", args: { city: "ottawa", maxPrice: 800_000 } }];
+    for (const answer of ["I reached the tool limit for this turn.", "Budget exhausted."]) {
+      expect(evaluateCaseOutcome(t02, { answer, toolEvents, grounded: [] }).passed).toBe(false);
+    }
+  });
+
+  it("ignores address and URL digits when collecting grounded numbers", () => {
+    const grounded: number[] = [];
+    collectGroundTruth(
+      {
+        totalMatches: 2,
+        listings: [
+          {
+            city: "kitchener",
+            price: 512_000,
+            address: "18 Dexshire Dr, Kitchener, ON N2H 2M4",
+            url: "https://www.zillow.com/homedetails/18-Dexshire-Dr/460647070_zpid/",
+          },
+        ],
+      },
+      grounded,
+    );
+    expect(grounded).toContain(512_000);
+    expect(grounded).not.toContain(18);
+    expect(grounded).not.toContain(460_647_070);
   });
 });

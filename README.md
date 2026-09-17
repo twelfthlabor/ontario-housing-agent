@@ -1,13 +1,16 @@
 # Ontario Housing Agent
 
 A free public demo where visitors chat with a tool-calling LLM agent about a
-sanitized sample of roughly 20,000 Ontario for-sale property listings across 36
-cities. The agent answers questions like "median asking price for a 3-bed in
-Hamilton?" or "how many listings are in M6P?" by calling deterministic search
-and stats functions over a JSON dataset. Numbers come from those functions; the
-model picks tools and writes the reply. Search answers render up to six listing
-cards and a sample-size line, and the atlas mirrors its state (city, compare
-pair, sort, price ceiling, tab) into the URL so a view can be shared.
+research sample of 19,356 Ontario for-sale listings across 36 cities. The agent
+answers questions like "median asking price for a 3-bed in Hamilton?" or "how
+many listings are in M6P?" by calling deterministic search and stats functions
+over a JSON dataset. Numbers come from those functions; the model picks tools
+and writes the reply. Search and snapshot tools accept a 3-character FSA (a full
+postal code is reduced to it). Search answers render up to six listing cards
+(each with its address and a link to the source listing) and a sample-size line.
+The atlas has a Data tab with a CSV export, and its state (city, compare pair,
+sort, price ceiling, tab, view) is mirrored into the URL so a view can be
+shared.
 
 Live demo: https://ontario-housing-agent.vercel.app
 
@@ -31,7 +34,7 @@ Requires Node.js 24 and Python 3. Run all commands from this directory
 npm install
 python3 pipeline/build_dataset.py            # writes data/listings.json + data/market_summary.json
 MOCK_LLM=1 npm run dev                       # open the URL printed by Next.js
-npm test                                     # vitest: tools, agent, guards, dataset
+npm test                                     # vitest: tools, agent, guards, routes, providers, evals
 npm run build                                # production build; npm start serves it
 MOCK_LLM=1 npm run evals                     # golden harness, plumbing only (no network)
 ```
@@ -42,23 +45,18 @@ without `MOCK_LLM=1`. The app shows an offline-demo notice when using scripted r
 Both Next.js and `npm run evals` load `.env.local`; exported environment variables
 take precedence for the eval command. Restart the server after changing providers or data.
 
-`npm run evals` runs the 30 golden cases and needs `GROQ_API_KEY` for live
-scoring; without a key it exits 1 with instructions. `MOCK_LLM=1 npm run evals`
-runs the plumbing only. Each successful run writes `evals/report.json`, which is
-gitignored. Reports include the answers and tool arguments for diagnosis.
-`quality_gate_passed` stays false for mock runs and partial runs (`--limit` or
-`--category` selecting fewer than all cases), even if their selected cases pass.
+`npm run evals` runs the 32 golden cases (10 tool choice, 10 numeric, 12
+refusals) and needs `GROQ_API_KEY` for live scoring; without a key it exits 1
+with instructions. `MOCK_LLM=1 npm run evals` runs the plumbing only. Each
+successful run writes `evals/report.json`, which is gitignored. Reports include
+the answers and tool arguments for diagnosis. Live bars: tool choice >= 0.90,
+numeric >= 0.95, refusals 1.00. `quality_gate_passed` stays false for mock runs
+and partial runs (`--limit` or `--category` selecting fewer than all cases),
+even if their selected cases pass.
 
 `pipeline/build_dataset.py` reads `../property-scraper/data/regions` by default;
-pass `--source <dir>` to point it elsewhere.
-
-`--enriched-out output/listings_enriched.json` additionally writes a local-only
-copy of the kept rows with `listing_id`, `url`, and `address` reattached (same
-rows and sanitized fields as `data/listings.json`). Run `ENRICHED_DATA=1 npm run
-dev` to load it: cards then show the address and a "View listing" link to the
-source, with a small banner and an enriched-mode About notice. The file belongs
-under the gitignored `output/` and is never tracked; unset, the app uses the
-tracked sanitized data. Never set `ENRICHED_DATA` in a deployed environment.
+pass `--source <dir>` to point it elsewhere. Listing ids are used for dedupe and
+never written.
 
 ## Environment variables
 
@@ -69,7 +67,6 @@ tracked sanitized data. Never set `ENRICHED_DATA` in a deployed environment.
 | `GEMINI_API_KEY` | Optional fallback provider, used only when set and a Groq call fails before emitting output. Groq remains the primary free provider. Keep billing disabled on both accounts. |
 | `GEMINI_MODEL` | Optional fallback model override; defaults to `gemini-2.5-flash-lite`. |
 | `MOCK_LLM` | Set to `1` to use the deterministic mock LLM (tests/CI; no key needed). |
-| `ENRICHED_DATA` | Local only: set to `1` to load `output/listings_enriched.json` (source URL/address included) instead of the tracked sanitized dataset. Never set in a deployed environment. |
 
 ## Architecture
 
@@ -78,10 +75,10 @@ property-scraper/  (separate repo; read-only here)
   data/regions/<city>/listings.csv
         |
         v
-pipeline/build_dataset.py   dedupe by listing id -> filter -> extract FSA -> drop identifiers
+pipeline/build_dataset.py   dedupe by listing id -> filter -> extract FSA -> write nine fields
         |
         v
-data/listings.json          ~20k sanitized listings
+data/listings.json          19,356 listings incl. address + source URL
 data/market_summary.json    per-city aggregates
         |
         v
@@ -107,11 +104,11 @@ ontario-housing-agent/
 │   └── DATA.md               dataset fields, filters, limitations, terms
 ├── pipeline/                 Python data build; stdlib unittest coverage
 ├── data/                     generated listings.json + market_summary.json
-├── lib/                      tools.ts, agent.ts (tool loop), providers.ts (Groq/Gemini/mock), guards.ts
-├── app/                      Next.js app: /api/chat SSE route and chat UI
-├── components/               chat UI components
-├── tests/                    vitest: tools, agent, guards, cache route, dataset (e.g. tests/tools.test.ts)
-└── evals/                    30 golden cases + run.ts harness (npm run evals; report.json gitignored)
+├── lib/                      tools.ts, agent.ts (tool loop), dataset.ts, providers.ts (Groq/Gemini/mock), guards.ts
+├── app/                      Next.js app: /api/chat SSE route, /api/listings JSON+CSV route, atlas UI
+├── components/               atlas and chat UI components (DataTable.tsx backs the Data tab)
+├── tests/                    vitest: tools, agent, guards, cache route, listings route, providers, eval scoring
+└── evals/                    32 golden cases + run.ts harness (npm run evals; report.json gitignored)
 ```
 
 ## Documentation
@@ -122,9 +119,10 @@ ontario-housing-agent/
 
 ## Disclaimers
 
-- The dataset is a sanitized research sample of public for-sale listing data
-  (Zillow). It contains no addresses, URLs, or agent names. Not affiliated with
-  Zillow.
+- The dataset is a research sample of public for-sale listing data (Zillow).
+  It includes each listing's address and a link to the source listing; listing
+  ids, agent names, and scraped source pages are not published. Not affiliated
+  with Zillow.
 - Asking prices only; no sold prices. Square footage covers about 20% of rows and
   varies by city; values outside a plausible 200-20,000 sqft range (for example,
   land listings whose acreage the source renders as interior square feet) are
@@ -138,4 +136,4 @@ ontario-housing-agent/
 
 PolyForm Noncommercial 1.0.0: free for personal, research, and other
 noncommercial use; commercial use requires permission. This is a research
-project built on a sanitized sample of public listing data. See [LICENSE](LICENSE).
+project built on a sample of public listing data. See [LICENSE](LICENSE).

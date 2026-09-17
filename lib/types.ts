@@ -6,6 +6,8 @@ export type Listing = {
   baths: number | null;
   sqft: number | null;
   seen: string;
+  address?: string;
+  url?: string;
 };
 
 export type CitySnapshot = {

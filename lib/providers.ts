@@ -177,13 +177,18 @@ export function mockAnswerFromToolResult(message: ChatMessage): string {
       listings?: Array<Partial<Listing>>;
     } | null;
     const total = Number(result?.totalMatches ?? 0);
-    const cheapest = result?.listings?.[0];
+    const listings = result?.listings ?? [];
+    const cheapest = [...listings].sort(
+      (a, b) => Number(a.price ?? Infinity) - Number(b.price ?? Infinity),
+    )[0];
     if (!total || !cheapest) {
       return "No listings in the sample matched that search. Try a higher price or a different city.";
     }
+    const where = cheapest.address ? `, ${cheapest.address}` : "";
+    const source = cheapest.url ? ` (${cheapest.url})` : "";
     return `The sample has ${total.toLocaleString("en-CA")} matching listings. The cheapest is a ${
       cheapest.beds ?? "?"
-    }-bed in ${displayCity(cheapest.city)} at ${formatMoney(cheapest.price)}.`;
+    }-bed in ${displayCity(cheapest.city)} at ${formatMoney(cheapest.price)}${where}${source}.`;
   }
 
   if (message.name === "city_snapshot") {
@@ -233,7 +238,7 @@ export function createMockProvider(): Provider {
         yield {
           type: "text",
           delta:
-            "I can only answer from the sanitized Ontario listing sample. Ask about a city, for example Ottawa or Hamilton, or ask me to compare two cities.",
+            "I can only cover the Ontario cities in the listing sample. Ask about a city, for example Ottawa or Hamilton, or ask me to compare two cities.",
         };
         return;
       }

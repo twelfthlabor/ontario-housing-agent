@@ -1,34 +1,33 @@
-# AGENTS.md — Ontario Housing Agent
+# AGENTS.md: Ontario Housing Agent
 
 Operating notes for coding agents. Quickstart, architecture, and dataset docs
-live in README.md, docs/PLAN.md, and docs/DATA.md — don't duplicate them here.
+live in README.md, docs/PLAN.md, and docs/DATA.md; don't duplicate them here.
 
 ## Commands
 
-- `npm test` — vitest run: all tests under tests/ (tools, agent, guards, cache route, dataset, providers, eval scoring).
-  Single file: `MOCK_LLM=1 npx vitest run tests/tools.test.ts`.
-- `npx tsc --noEmit` — typecheck. No linter or formatter is configured; don't add one.
-- `npm run build` — next build, also typechecks. Next 16 rewrites `tsconfig.json` on build (adds its type includes):
+- `npm test`: vitest run over all tests under tests/ (tools, agent, guards, cache route, listings route, providers,
+  eval scoring). Single file: `MOCK_LLM=1 npx vitest run tests/tools.test.ts`.
+- `npx tsc --noEmit`: typecheck. No linter or formatter is configured; don't add one.
+- `npm run build`: next build, also typechecks. Next 16 rewrites `tsconfig.json` on build (adds its type includes):
   review the diff instead of reverting, keep TypeScript at 5.9.x. `next-env.d.ts` is gitignored (Next regenerates it).
-- `npm run dev` — port 3000 (`PORT=3200 npm run dev` if busy). Prod: `npm run build && npm run start`.
-- `python3 -m unittest discover -s pipeline/tests -v` — pipeline tests, stdlib only (no venv/pandas); CI pins Python
+- `npm run dev`: port 3000 (`PORT=3200 npm run dev` if busy). Prod: `npm run build && npm run start`.
+- `python3 -m unittest discover -s pipeline/tests -v`: pipeline tests, stdlib only (no venv/pandas); CI pins Python
   3.11. Single test: add `-k <pattern>` (e.g. `-p test_build_dataset.py -k dedupe`).
-- `python3 pipeline/build_dataset.py --enriched-out output/listings_enriched.json` — local-only build with source
-  `listing_id`/`url`/`address` reattached. Run against it with `ENRICHED_DATA=1 npm run dev`; never set `ENRICHED_DATA`
-  in a deployed environment.
-- `npm run evals` — live, loads `.env.local` with Node 24, needs `GROQ_API_KEY`, sequential with `EVAL_DELAY_MS` default 2500.
-  `MOCK_LLM=1 npm run evals` — plumbing only, no network, exit 0. Flags: `--category`, `--limit`, `--mock`. Writes
-  `evals/report.json` (gitignored). Live bars: tool 0.9, numeric 0.95, refusal 1.0; mock scores are not a quality
-  signal. Partial runs cannot satisfy the full quality gate.
+- `python3 pipeline/build_dataset.py`: rebuilds `data/listings.json` + `data/market_summary.json` from the sibling
+  scrape tree; `--source <dir>` and `--out <dir>` point elsewhere. Overwrites tracked data, so only run it to refresh.
+- `npm run evals`: live, loads `.env.local` with Node 24, needs `GROQ_API_KEY`, sequential with `EVAL_DELAY_MS` default 2500.
+  `MOCK_LLM=1 npm run evals`: plumbing only, no network, exit 0. Flags: `--category`, `--limit`, `--mock`. Writes
+  `evals/report.json` (gitignored). 32 golden cases (10 tool choice, 10 numeric, 12 refusals); live bars: tool 0.9,
+  numeric 0.95, refusal 1.0; mock scores are not a quality signal. Partial runs cannot satisfy the full quality gate.
 
 ## Environment
 
 - `MOCK_LLM=1` (also `true`/`yes`) selects the deterministic mock provider and needs no keys. Unset with no key in
   dev it also mocks; in production a missing key emits a `misconfigured` error event.
-- Live mode needs `GROQ_API_KEY`; put it in `.env.local` (gitignored — `.env.example` lists the names). `GROQ_MODEL`
+- Live mode needs `GROQ_API_KEY`; put it in `.env.local` (gitignored: `.env.example` lists the names). `GROQ_MODEL`
   overrides the default `openai/gpt-oss-120b`. `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`) is a fallback only when
   Groq fails before emitting.
-- CI (`.github/workflows/ci.yml`): `npm ci`, `MOCK_LLM=1` vitest, `npm run build`, python unittest — Node 24 /
+- CI (`.github/workflows/ci.yml`): `npm ci`, `MOCK_LLM=1` vitest, `npm run build`, python unittest: Node 24 /
   Python 3.11. Evals are intentionally not in CI.
 
 ## Invariants
@@ -40,7 +39,9 @@ live in README.md, docs/PLAN.md, and docs/DATA.md — don't duplicate them here.
   works internally for `compare_cities`). Full postal codes reduce to the leading 3-character FSA (`"M6P 1A1"` ->
   `"M6P"`); rows without an FSA are excluded when a filter is set, and a scoped snapshot returns null when the FSA
   has no rows.
-- `lib/agent.ts` is the typed-event agent loop: hard caps 3 tool iterations / 4 LLM calls per turn.
+- `lib/agent.ts` is the typed-event agent loop: hard caps 3 tool iterations / 4 LLM calls per turn. `SYSTEM_PROMPT`
+  requires a tool call for every number, asks one brief question when a required detail (for example the city) is
+  missing instead of declining, and requires any decline to name the specific limitation in one line.
   `lib/providers.ts` calls Groq with plain `fetch` (no SDK dependency, 20s timeout per call), plus mock and optional
   Gemini providers.
 - Client-visible errors are stable codes only (`provider_error`, `misconfigured`, `rate_limited`,
@@ -54,31 +55,37 @@ live in README.md, docs/PLAN.md, and docs/DATA.md — don't duplicate them here.
   History-bearing requests bypass the cache; only completed, error-free answers are stored. Entries keep the answer's
   `tool`/`tool_result` display events, so a hit replays `cached -> tool -> tool_result -> text -> done`.
   Cache hits remain per-IP rate limited, but can be served after the LLM budget runs out.
-  Per instance, resets on cold start — never a security boundary.
-- `pipeline/build_dataset.py` (stdlib only, run from repo root): dedupe by listing id (newest `scraped_at` wins),
-  filter, sanitize, write `data/listings.json` + `data/market_summary.json`. Default `--source` is the sibling
-  `../property-scraper/data/regions`; `--out` defaults to `data/`. `--enriched-out` writes a local-only copy with
-  `listing_id`/`url`/`address` reattached and refuses paths inside the sanitized output dir (case-insensitive).
-  `lib/dataset.ts` imports both tracked files directly (no database, no runtime reads); `ENRICHED_DATA=1` (exact value)
-  swaps in `output/listings_enriched.json`, falling back to sanitized with one warning when it is missing or malformed.
-  Never set `ENRICHED_DATA` in a deployed environment.
-- Sanitized rows in `data/listings.json` are exactly `{city,fsa,price,beds,baths,sqft,seen}`; never reintroduce
-  address/url/agent/listing id into tracked data. `sqft` outside 200-20,000 is nulled (land acreage bug); per-city
-  `medianSqft` is null under 10 samples. Local enriched rows (gitignored `output/`) add `listing_id`/`url`/`address`
-  on top of those seven fields and must never reach tracked files, client bundles, or a deploy; `next.config.ts`
-  excludes `./output/**` from route traces.
+  Per instance, resets on cold start; never a security boundary.
+- `pipeline/build_dataset.py` (stdlib only, run from repo root): dedupe by listing id (newest `scraped_at` wins; the
+  id is never emitted), filter, write `data/listings.json` + `data/market_summary.json`. Default `--source` is the
+  sibling `../property-scraper/data/regions`; `--out` defaults to `data/`. `lib/dataset.ts` imports both tracked files
+  directly (no database, no runtime reads). No enriched/local export mode exists; don't reintroduce one.
+- Rows in `data/listings.json` are exactly `{city,fsa,price,beds,baths,sqft,seen,address,url}` (19,356 rows, 36
+  cities). Address and source URL are intentionally published; never reintroduce `listing_id`, agent names, or scraped
+  source pages into tracked data. `sqft` outside 200-20,000 is nulled (land acreage bug); per-city `medianSqft` is
+  null under 10 samples.
+- `/api/listings` GET serves the Data tab: JSON `{total, returned, listings}` for one city (default limit 100, capped
+  at 200, sorted by price), or `?format=csv` returning all rows as `city,fsa,price,beds,baths,sqft,seen,address,url`
+  (RFC 4180 quoting, formula-looking cells prefixed with `'`, serialized once per server process).
+- Atlas URL state (`components/Workspace.tsx`): city, compare, sort, max, tab, and view are mirrored with one-way
+  `replaceState`; defaults are omitted, `max` snaps to the 50k slider step, and unknown params fall back to defaults.
+  Share-only: back/forward does not resync it.
 - Rebuilds are byte-identical only with a fixed `SOURCE_DATE_EPOCH`; otherwise `generated_at` changes.
-- Eval expected values come from `lib/tools` at runtime; never hardcode dataset numbers in `evals/cases.jsonl`.
+- Eval expected values come from `lib/tools` at runtime; never hardcode dataset numbers in `evals/cases.jsonl`. The
+  scoring rules live in that file's `_doc` line and in `evals/run.ts`: per-case phrase patterns plus a structural
+  refusal rule (decline marker within 100 characters of the case's limitation subject), strict per-case forbid
+  patterns, and ungrounded-number checks. Tool choice passes when any tool event in the turn matches the expected tool
+  and args; an answer that is only a tool-limit or budget notice fails.
 
 ## Don't
 
-- Never hand-edit `data/*.json` — change the pipeline and regenerate. The ~1.9 MB JSON is tracked on purpose; don't
+- Never hand-edit `data/*.json`: change the pipeline and regenerate. The ~4.6 MB JSON is tracked on purpose; don't
   gitignore it.
 - `../property-scraper` is a read-only data source: never modify it or run its scraper from here.
-- Never commit, push, deploy, or enable provider billing — free tier only. Never print keys into logs or client code.
-- Don't package or share `.next/` — the gitignored build cache can hold build-time env values.
+- Never commit, push, deploy, or enable provider billing: free tier only. Never print keys into logs or client code.
+- Don't package or share `.next/`: the gitignored build cache can hold build-time env values.
 - After touching `lib/guards.ts`, `lib/providers.ts`, or `app/api/chat/route.ts`: re-run the affected vitest files
-  and smoke-test with curl — 415 wrong content type, 403 mismatched Origin, 429 6th request in a minute, security
+  and smoke-test with curl: 415 wrong content type, 403 mismatched Origin, 429 6th request in a minute, security
   headers present.
 
 <!-- BEGIN:nextjs-agent-rules -->

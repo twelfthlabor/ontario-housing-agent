@@ -164,7 +164,7 @@ function cardMeta(card: ListingCard): string {
   return parts.join(" · ");
 }
 
-export default function Chat({ offline, draft, enriched = false }: { offline: boolean; draft: { text: string; id: number } | null; enriched?: boolean }) {
+export default function Chat({ offline, draft }: { offline: boolean; draft: { text: string; id: number } | null }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -351,7 +351,6 @@ export default function Chat({ offline, draft, enriched = false }: { offline: bo
     <section className="chat" aria-label="Chat with the housing agent">
       <div className="chat-heading"><span>{offline ? "Offline demo" : "Sample-based assistant"}</span><button className="new-chat" type="button" aria-label="New chat" disabled={busy || messages.length === 0} onClick={() => { setMessages([]); setInput(""); setError(null); inputRef.current?.focus(); }}><Icon name="plus" />New chat</button></div>
       {offline ? <p className="demo-notice">Scripted answers from the sample. Budget filters and follow-up questions need the live model.</p> : null}
-      {enriched ? <p className="enriched-notice">Local enriched data: cards can link to the source listing. The public demo runs on the sanitized sample.</p> : null}
       <div className="messages" ref={messagesRef} role="log" aria-live="polite">
         {messages.length === 0 ? <div className="chat-empty"><span className="chat-empty-mark"><Icon name="chat" /></span><h2>A closer look.</h2><p>Ask about a city’s asking prices,<br />or put two places side by side.</p></div> : null}
         {messages.map((message, index) => <div className={`msg msg-${message.role}`} key={`${message.role}-${index}`}>

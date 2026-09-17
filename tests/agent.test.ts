@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-import { MAX_LLM_CALLS_PER_TURN, MAX_TOOL_ITERATIONS, runAgent, sseEvent } from "../lib/agent";
+import {
+  MAX_LLM_CALLS_PER_TURN,
+  MAX_TOOL_ITERATIONS,
+  SYSTEM_PROMPT,
+  runAgent,
+  sseEvent,
+} from "../lib/agent";
 import type { AgentEvent } from "../lib/agent";
 import { BudgetExhaustedError } from "../lib/agent";
 import { createMockProvider, ProviderError } from "../lib/providers";
@@ -188,6 +194,15 @@ describe("mock-provider agent turns (no network)", () => {
   it("formats SSE frames as one JSON payload per data line", () => {
     expect(sseEvent({ type: "text", delta: "hi" })).toBe('data: {"type":"text","delta":"hi"}\n\n');
     expect(sseEvent({ type: "done" })).toBe('data: {"type":"done"}\n\n');
+  });
+});
+
+describe("system prompt contract (no network)", () => {
+  it("asks for a missing required detail instead of declining", () => {
+    const prompt = SYSTEM_PROMPT.toLowerCase();
+    expect(prompt).toMatch(/missing[^.]*detail/);
+    expect(prompt).toMatch(/do not decline/);
+    expect(prompt).toMatch(/ask one brief question/);
   });
 });
 

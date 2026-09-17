@@ -35,8 +35,6 @@ output/research/*.geojson
 # local QA screenshots and research extracts
 output/
 
-# local-only enriched export (pipeline refuses to write it under data/)
-data/*enriched*
 
 # vercel local link state
 .vercel/
