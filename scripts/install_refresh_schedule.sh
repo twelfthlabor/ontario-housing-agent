@@ -33,6 +33,7 @@ cat > "$PLIST" <<EOF
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/bin/bash</string>
     <string>$DRIVER</string>
   </array>
   <key>WorkingDirectory</key>
@@ -43,7 +44,7 @@ cat > "$PLIST" <<EOF
     <string>$TOOL_PATH</string>
   </dict>
   <key>StartInterval</key>
-  <integer>21600</integer>
+  <integer>86400</integer>
   <key>StandardOutPath</key>
   <string>$LOG_FILE</string>
   <key>StandardErrorPath</key>
@@ -59,7 +60,7 @@ launchctl enable "$DOMAIN/$LABEL" 2>/dev/null || true
 
 echo "installed: $PLIST"
 echo "driver:    $DRIVER"
-echo "schedule:  every 6 h (StartInterval 21600); nothing runs at load"
+echo "schedule:  every 24 h (StartInterval 86400); nothing runs at load"
 echo "log:       $LOG_FILE"
 echo "status:    launchctl print $DOMAIN/$LABEL | grep -E 'state|last exit'"
 echo "run now:   launchctl kickstart -k $DOMAIN/$LABEL"
