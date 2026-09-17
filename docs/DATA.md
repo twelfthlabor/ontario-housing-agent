@@ -107,19 +107,24 @@ kawartha-lakes median moved from 58 to 2,015, and innisfil from 2,206 to 3,648.
 
 ## Refresh
 
-Refresh is manual for now:
+Refresh is automated by `scripts/ontario_refresh.sh`, run every 6 hours by a
+launchd agent (`scripts/install_refresh_schedule.sh` installs it; log at
+`output/refresh.log`). It starts a scrape refresh when the newest region CSV is
+older than 7 days, or when a previous run left regions unfinished
+(pending/partial/challenged), at most one start per 24 hours. Once a scrape has settled with newer CSVs it rebuilds the
+snapshot, runs the pipeline tests and vitest suite, and commits and pushes
+`data/listings.json` + `data/market_summary.json` to `origin`; Vercel
+auto-deploys and the agent serves the new snapshot after deploy.
 
-1. Let `property-scraper` update its per-city CSVs (separate project; out of
-   scope here).
-2. Rebuild:
+Manual fallback:
 
-   ```bash
-   python3 pipeline/build_dataset.py --source ../property-scraper/data/regions
-   ```
+```bash
+python3 pipeline/build_dataset.py --source ../property-scraper/data/regions
+```
 
-3. The build overwrites `data/listings.json` and `data/market_summary.json`.
-
-A weekly refresh is planned.
+The build overwrites `data/listings.json` and `data/market_summary.json` (the
+scheduled run commits them). A scrape may be interrupted by a Zillow challenge;
+a human clears it in the attach Chrome and the next run resumes the queue.
 
 ## Limitations
 
@@ -132,7 +137,9 @@ A weekly refresh is planned.
 - **Single snapshot.** The current build keeps no history, so price changes and
   price cuts cannot be computed. Adding that would require snapshot archiving in
   `property-scraper` (planned).
-- **Staleness.** Refreshes are manual, so the snapshot ages between builds.
+- **Staleness.** The snapshot refreshes automatically as scrape data advances
+  (checked every 6 hours), but a Zillow challenge or an interrupted queue can
+  leave it a few days old until a human clears the challenge.
 - **Duplicate rows.** Dedupe is by listing id only. 620 rows still repeat another
   row on the seven non-address fields (city, FSA, price, beds, baths, sqft,
   seen) while differing in address/url, which can slightly overstate

@@ -71,7 +71,7 @@ describe("mock-provider agent turns (no network)", () => {
     expect(snapshot).not.toBeNull();
     const text = textOf(events);
     expect(text.toLowerCase()).toContain(firstCity);
-    expect(text).toContain(String(snapshot?.count));
+    expect(text).toContain(Number(snapshot?.count).toLocaleString("en-CA"));
     expect(text).toContain(`$${Math.round(Number(snapshot?.medianPrice)).toLocaleString("en-CA")}`);
   });
 
