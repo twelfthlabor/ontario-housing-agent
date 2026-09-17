@@ -141,6 +141,29 @@ function summarizeResult(name: string, result: unknown): string {
       record.medianPrice,
     )}`;
   }
+  if (name === "rank_areas" && typeof record.city === "string") {
+    const areas = Array.isArray(record.areas) ? (record.areas as Array<Record<string, unknown>>) : [];
+    if (areas.length === 0) {
+      const considered = Number(record.considered ?? 0);
+      return considered === 0
+        ? `no matching listings in ${record.city}`
+        : `no area with 5 or more matching listings in ${record.city} (${considered.toLocaleString(
+            "en-CA",
+          )} listings considered)`;
+    }
+    const label = record.metric === "count" ? "listing count" : "median price";
+    const listed = areas
+      .map(
+        (area) =>
+          `${String(area.fsa ?? "")} ${formatMoney(area.medianPrice)} (${Number(area.count ?? 0).toLocaleString(
+            "en-CA",
+          )})`,
+      )
+      .join(", ");
+    return `${record.city}: ${areas.length} of ${Number(record.totalAreas ?? 0)} areas by ${label} (${
+      record.order
+    }): ${listed}`;
+  }
   return JSON.stringify(result).slice(0, 120);
 }
 

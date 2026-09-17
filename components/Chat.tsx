@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import Icon from "./Icon";
 import { cityName, money } from "./format";
 
@@ -9,6 +9,7 @@ type ToolChip = {
   name: string;
   label: string;
   summary?: string;
+  args?: Record<string, unknown>;
   done: boolean;
 };
 
@@ -70,8 +71,48 @@ function toolLabel(name: string, args: unknown): string {
         .join(", ");
     }
   }
-  const friendlyName = ({ city_snapshot: "City snapshot", compare_cities: "City comparison", search_listings: "Listing search" } as Record<string, string>)[name] ?? "Sample lookup";
+  const friendlyName = ({ city_snapshot: "City snapshot", compare_cities: "City comparison", rank_areas: "Area ranking", search_listings: "Listing search" } as Record<string, string>)[name] ?? "Sample lookup";
   return suffix ? `${friendlyName} · ${suffix}` : friendlyName;
+}
+
+const SORT_LABELS: Record<string, string> = { price_asc: "cheapest first", price_desc: "most expensive first" };
+const METRIC_LABELS: Record<string, string> = { median_price: "median price", count: "listing count" };
+const ORDER_LABELS: Record<string, string> = { asc: "lowest first", desc: "highest first" };
+
+/** "st. catharines" / "st-catharines" -> "St. Catharines". */
+function titleCity(value: string): string {
+  return cityName(value.trim().toLowerCase().replace(/[\s.]+/g, "-"));
+}
+
+function argText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((entry) => (typeof entry === "string" ? titleCity(entry) : String(entry))).join(", ");
+  }
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return value === undefined ? "—" : String(value);
+}
+
+/** A known argument reads as its value ("Toronto", "3 beds"); anything else as "key: value". */
+function argNode(key: string, value: unknown): ReactNode {
+  if (key === "city" && typeof value === "string") return titleCity(value);
+  if (key === "fsa" && typeof value === "string") return <span className="provenance-fsa">{value.trim().toUpperCase()}</span>;
+  if (key === "beds" && typeof value === "number") return `${value} ${value === 1 ? "bed" : "beds"}`;
+  if (key === "bathsMin" && typeof value === "number") return `≥ ${value} ${value === 1 ? "bath" : "baths"}`;
+  if ((key === "minPrice" || key === "maxPrice") && typeof value === "number") return `${key === "minPrice" ? "≥" : "≤"} ${money(value)}`;
+  if (key === "sort" && typeof value === "string") return SORT_LABELS[value] ?? value;
+  if (key === "metric" && typeof value === "string") return METRIC_LABELS[value] ?? value;
+  if (key === "order" && typeof value === "string") return ORDER_LABELS[value] ?? value;
+  return `${key}: ${argText(value)}`;
+}
+
+/**
+ * "search_listings · Toronto · 2 beds" — the raw arguments the model sent, before server-side
+ * normalisation (a full postal code appears before FSA reduction, a limit before capping).
+ */
+function toolCallLine(name: string, args: Record<string, unknown> | undefined): ReactNode {
+  const parts: ReactNode[] = [name];
+  if (args) for (const [key, value] of Object.entries(args)) parts.push(argNode(key, value));
+  return parts.map((part, index) => <Fragment key={index}>{index > 0 ? " · " : ""}{part}</Fragment>);
 }
 
 function updateLastAssistant(
@@ -267,12 +308,16 @@ export default function Chat({ offline, draft }: { offline: boolean; draft: { te
             case "tool": {
               const name = typeof event.name === "string" ? event.name : "tool";
               const label = toolLabel(name, event.args);
+              const args =
+                event.args && typeof event.args === "object" && !Array.isArray(event.args)
+                  ? (event.args as Record<string, unknown>)
+                  : undefined;
               setMessages((prev) =>
                 updateLastAssistant(prev, (message) => ({
                   ...message,
                   tools: [
                     ...message.tools,
-                    { id: `${name}-${message.tools.length}`, name, label, done: false },
+                    { id: `${name}-${message.tools.length}`, name, label, args, done: false },
                   ],
                 })),
               );
@@ -371,6 +416,13 @@ export default function Chat({ offline, draft }: { offline: boolean; draft: { te
             {message.search.total > message.search.cards.length ? <span className="listing-cards-note">Showing {message.search.cards.length} of {message.search.total.toLocaleString("en-CA")}</span> : null}
           </> : null}
           {message.basis !== null ? <p className="answer-basis">Based on {message.basis.value.toLocaleString("en-CA")} sample listings · asking prices only, not live MLS</p> : null}
+          {message.tools.length > 0 ? <details className="provenance">
+            <summary><Icon name="database" /><span>How this answer was computed</span><Icon name="chevron" className="provenance-chevron" /></summary>
+            <div className="provenance-body">{message.tools.map((tool) => <div className="provenance-row" key={tool.id}>
+              <span className="provenance-call">{toolCallLine(tool.name, tool.args)}</span>
+              {tool.summary ? <span className="provenance-result">{tool.summary}</span> : null}
+            </div>)}</div>
+          </details> : null}
         </div>)}
       </div>
       {messages.length === 0 ? <div className="suggestions" aria-label="Suggested questions">{SUGGESTIONS.slice(0, 2).map(({ question, title, icon }) => <button className="question-suggestion" type="button" disabled={busy} key={question} onClick={() => void send(question)}><Icon name={icon} /><span>{title}</span><Icon name="arrow" /></button>)}</div> : null}

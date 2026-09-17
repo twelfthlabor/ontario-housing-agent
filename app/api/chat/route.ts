@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { BudgetExhaustedError, errorEventFrom, runAgent, sseEvent } from "@/lib/agent";
-import type { AgentEvent, AgentInputMessage } from "@/lib/agent";
+import type { AgentErrorCode, AgentEvent, AgentInputMessage } from "@/lib/agent";
 import {
   checkBudget,
   consumeLlmCall,
@@ -13,6 +13,7 @@ import {
   takeRateLimit,
 } from "@/lib/guards";
 import type { CachedDisplayEvent } from "@/lib/guards";
+import { logEvent } from "@/lib/observability";
 import { getProvider } from "@/lib/providers";
 
 export const runtime = "nodejs";
@@ -49,6 +50,8 @@ function originMatches(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+
   if (!originMatches(request)) {
     return NextResponse.json({ error: "forbidden_origin" }, { status: 403 });
   }
@@ -80,6 +83,7 @@ export async function POST(request: NextRequest) {
   );
   const rate = takeRateLimit(guards, ip);
   if (!rate.allowed) {
+    logEvent({ event: "rate_limited", reason: "rate_limited" });
     return NextResponse.json(
       { error: "rate_limited", retry_after_s: rate.retryAfterS },
       { status: 429 },
@@ -90,6 +94,13 @@ export async function POST(request: NextRequest) {
   const cacheable = messages.length === 1;
   const cached = cacheable ? getCachedAnswer(guards, question) : null;
   if (cached === null && !checkBudget(guards).allowed) {
+    logEvent({
+      event: "chat_turn",
+      durationMs: Date.now() - startedAt,
+      cached: false,
+      tools: [],
+      errorCode: "budget_exhausted",
+    });
     return NextResponse.json({ error: "budget_exhausted" }, { status: 503 });
   }
 
@@ -98,13 +109,18 @@ export async function POST(request: NextRequest) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const toolNames: string[] = [];
       const send = (event: AgentEvent) => {
+        if (event.type === "tool" && !toolNames.includes(event.name)) {
+          toolNames.push(event.name);
+        }
         controller.enqueue(encoder.encode(sseEvent(event)));
       };
 
       let answer = "";
       let completed = false;
       let failed = false;
+      let errorCode: AgentErrorCode | undefined;
       // Replayed on a cache hit so the UI keeps cards, the "Based on N" line, and tool chips.
       const displayEvents: CachedDisplayEvent[] = [];
       try {
@@ -126,7 +142,10 @@ export async function POST(request: NextRequest) {
             if (event.type === "text") answer += event.delta;
             if (event.type === "tool" || event.type === "tool_result") displayEvents.push(event);
             if (event.type === "done") completed = true;
-            if (event.type === "error") failed = true;
+            if (event.type === "error") {
+              failed = true;
+              errorCode = event.code;
+            }
             send(event);
           }
           if (cacheable && completed && !failed && !request.signal.aborted && answer.trim()) {
@@ -134,13 +153,23 @@ export async function POST(request: NextRequest) {
           }
         }
       } catch (error) {
-        send(errorEventFrom(error));
+        const event = errorEventFrom(error);
+        errorCode = event.code;
+        send(event);
       } finally {
         try {
           controller.close();
         } catch {
           // Stream already closed.
         }
+        // One metadata-only line per turn; never message content or headers.
+        logEvent({
+          event: "chat_turn",
+          durationMs: Date.now() - startedAt,
+          cached: cached !== null,
+          tools: toolNames,
+          errorCode,
+        });
       }
     },
   });

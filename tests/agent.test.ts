@@ -14,7 +14,7 @@ import { createMockProvider, ProviderError } from "../lib/providers";
 import type { Provider } from "../lib/providers";
 import { createGuardState } from "../lib/guards";
 import { TOOL_IMPLS, knownCities } from "../lib/tools";
-import type { CitySnapshot } from "../lib/types";
+import type { CitySnapshot, RankAreasResult } from "../lib/types";
 import { POST } from "../app/api/chat/route";
 
 async function collect(
@@ -50,6 +50,15 @@ function toolResultsOf(events: AgentEvent[]): Array<Extract<AgentEvent, { type: 
   return events.filter(
     (event): event is Extract<AgentEvent, { type: "tool_result" }> => event.type === "tool_result",
   );
+}
+
+function oneShotProvider(name: string, args: Record<string, unknown>): Provider {
+  return {
+    name: "one-shot",
+    async *stream() {
+      yield { type: "tool_call", id: "call_1", name, arguments: JSON.stringify(args) };
+    },
+  };
 }
 
 const cities = knownCities();
@@ -285,6 +294,118 @@ describe("tool_result structured data (no network)", () => {
       expect(rows[0].address).toBe("1 Test Street");
       expect(Object.keys(rows[0])).toContain("url");
       expect(result?.summary).toBe("2 matches, cheapest $650,000");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("tool_result summaries for filtered and ranked tools (no network)", () => {
+  it("summarizes a filtered city_snapshot over the filtered subset", async () => {
+    const all = TOOL_IMPLS.city_snapshot({ city: firstCity }) as CitySnapshot;
+    const args = { city: firstCity, maxPrice: all.medianPrice };
+
+    const events = await collect("anything", oneShotProvider("city_snapshot", args));
+    const result = toolResultsOf(events)[0];
+    const snapshot = TOOL_IMPLS.city_snapshot(args) as CitySnapshot | null;
+
+    expect(result?.name).toBe("city_snapshot");
+    expect(result?.data).toEqual(snapshot);
+    expect(snapshot?.count).toBeLessThan(all.count);
+    expect(result?.summary).toBe(
+      `${firstCity}: ${Number(snapshot?.count).toLocaleString("en-CA")} listings, median $${Math.round(
+        Number(snapshot?.medianPrice),
+      ).toLocaleString("en-CA")}`,
+    );
+  });
+
+  it("attaches and summarizes rank_areas results", async () => {
+    const args = { city: firstCity, metric: "count", limit: 3 };
+    const events = await collect("anything", oneShotProvider("rank_areas", args));
+    const result = toolResultsOf(events)[0];
+    const ranked = TOOL_IMPLS.rank_areas(args) as RankAreasResult | null;
+
+    expect(result?.name).toBe("rank_areas");
+    expect(result?.data).toEqual(ranked);
+    if (ranked && ranked.areas.length > 0) {
+      expect(result?.summary).toContain(`${firstCity}: ${ranked.areas.length} of ${ranked.totalAreas} areas`);
+      expect(result?.summary).toContain("listing count (desc)");
+    } else if (ranked && ranked.considered > 0) {
+      expect(result?.summary).toBe(
+        `no area with 5 or more matching listings in ${firstCity} (${ranked.considered.toLocaleString(
+          "en-CA",
+        )} listings considered)`,
+      );
+    } else {
+      expect(result?.summary).toBe(`no matching listings in ${firstCity}`);
+    }
+  });
+
+  it("formats rank_areas summaries with metric, area count, prices, and listing counts", async () => {
+    const fixture: RankAreasResult = {
+      city: firstCity,
+      metric: "median_price",
+      order: "asc",
+      considered: 40,
+      areas: [
+        { fsa: "M1B", count: 8, medianPrice: 520_000 },
+        { fsa: "M1C", count: 6, medianPrice: 560_500 },
+        { fsa: "M1E", count: 5, medianPrice: 580_000 },
+      ],
+      totalAreas: 12,
+    };
+    const spy = vi.spyOn(TOOL_IMPLS, "rank_areas").mockReturnValue(fixture);
+    try {
+      const events = await collect("anything", oneShotProvider("rank_areas", { city: firstCity, limit: 3 }));
+      const result = toolResultsOf(events)[0];
+      expect(result?.data).toBe(fixture);
+      expect(result?.summary).toBe(
+        `${firstCity}: 3 of 12 areas by median price (asc): M1B $520,000 (8), M1C $560,500 (6), M1E $580,000 (5)`,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("labels count rankings and reports empty area lists", async () => {
+    const spy = vi.spyOn(TOOL_IMPLS, "rank_areas");
+    try {
+      spy.mockReturnValue({
+        city: firstCity,
+        metric: "count",
+        order: "desc",
+        considered: 9,
+        areas: [{ fsa: "M1B", count: 9, medianPrice: 500_000 }],
+        totalAreas: 1,
+      });
+      let events = await collect("anything", oneShotProvider("rank_areas", { city: firstCity }));
+      expect(toolResultsOf(events)[0]?.summary).toBe(
+        `${firstCity}: 1 of 1 areas by listing count (desc): M1B $500,000 (9)`,
+      );
+
+      spy.mockReturnValue({
+        city: firstCity,
+        metric: "median_price",
+        order: "asc",
+        considered: 0,
+        areas: [],
+        totalAreas: 0,
+      });
+      events = await collect("anything", oneShotProvider("rank_areas", { city: firstCity }));
+      expect(toolResultsOf(events)[0]?.summary).toBe(`no matching listings in ${firstCity}`);
+
+      spy.mockReturnValue({
+        city: firstCity,
+        metric: "median_price",
+        order: "asc",
+        considered: 9,
+        areas: [],
+        totalAreas: 0,
+      });
+      events = await collect("anything", oneShotProvider("rank_areas", { city: firstCity }));
+      expect(toolResultsOf(events)[0]?.summary).toBe(
+        `no area with 5 or more matching listings in ${firstCity} (9 listings considered)`,
+      );
     } finally {
       spy.mockRestore();
     }

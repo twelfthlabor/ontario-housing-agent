@@ -6,7 +6,7 @@ live in README.md, docs/PLAN.md, and docs/DATA.md; don't duplicate them here.
 ## Commands
 
 - `npm test`: vitest run over all tests under tests/ (tools, agent, guards, cache route, listings route, providers,
-  eval scoring). Single file: `MOCK_LLM=1 npx vitest run tests/tools.test.ts`.
+  observability, eval scoring). Single file: `MOCK_LLM=1 npx vitest run tests/tools.test.ts`.
 - `npx tsc --noEmit`: typecheck. No linter or formatter is configured; don't add one.
 - `npm run build`: next build, also typechecks. Next 16 rewrites `tsconfig.json` on build (adds its type includes):
   review the diff instead of reverting, keep TypeScript at 5.9.x. `next-env.d.ts` is gitignored (Next regenerates it).
@@ -17,8 +17,12 @@ live in README.md, docs/PLAN.md, and docs/DATA.md; don't duplicate them here.
   scrape tree; `--source <dir>` and `--out <dir>` point elsewhere. Overwrites tracked data, so only run it to refresh.
 - `npm run evals`: live, loads `.env.local` with Node 24, needs `GROQ_API_KEY`, sequential with `EVAL_DELAY_MS` default 2500.
   `MOCK_LLM=1 npm run evals`: plumbing only, no network, exit 0. Flags: `--category`, `--limit`, `--mock`. Writes
-  `evals/report.json` (gitignored). 32 golden cases (10 tool choice, 10 numeric, 12 refusals); live bars: tool 0.9,
-  numeric 0.95, refusal 1.0; mock scores are not a quality signal. Partial runs cannot satisfy the full quality gate.
+  `evals/report.json` (gitignored). 38 golden cases (16 tool choice including multi-turn MT01-MT04 and capability
+  cases C01/C02, 10 numeric, 12 refusals); live bars: tool 0.9, numeric 0.95, refusal 1.0; mock scores are not a
+  quality signal. Partial runs cannot satisfy the full quality gate. Multi-turn cases run 2-3 user turns, score only
+  the final turn, and require a tool on the first turn; expectations may list `anyOf` alternatives; the report is
+  rewritten after each case, so an aborted run keeps partial results. Last completed full-suite pass: the 32-case
+  gate (2026-09-16); the 38-case suite has not completed a live run.
 
 ## Environment
 
@@ -35,6 +39,11 @@ live in README.md, docs/PLAN.md, and docs/DATA.md; don't duplicate them here.
 - `lib/tools.ts` is the single source of truth for tool schemas (`TOOL_SPECS`), implementations (`TOOL_IMPLS`),
   stats, and city alias normalization (`"St. Catharines"` -> `st-catharines`). Keep it deterministic, synchronous,
   free of LLM/network imports.
+- Tool surface behavior: `city_snapshot` accepts optional `minPrice`/`maxPrice`/`beds`/`bathsMin` and computes stats
+  over the matching rows (`null` when nothing matches). `rank_areas` ranks a city's FSAs by `median_price` or `count`,
+  keeps only areas with 5 or more matching listings, defaults to 5 rows (max 10), and returns `considered` (matching
+  listings with an FSA) and `totalAreas` (areas that cleared the threshold). `search_listings` filters price, exact
+  beds, and FSA but not bathrooms; `rank_areas` and filtered snapshots do.
 - FSA narrowing: `search_listings` takes an optional `fsa`; `city_snapshot` takes `{city, fsa}` (a bare string still
   works internally for `compare_cities`). Full postal codes reduce to the leading 3-character FSA (`"M6P 1A1"` ->
   `"M6P"`); rows without an FSA are excluded when a filter is set, and a scoped snapshot returns null when the FSA
@@ -46,6 +55,14 @@ live in README.md, docs/PLAN.md, and docs/DATA.md; don't duplicate them here.
   Gemini providers.
 - Client-visible errors are stable codes only (`provider_error`, `misconfigured`, `rate_limited`,
   `budget_exhausted`); real details stay in server logs.
+- `lib/observability.ts` writes one metadata-only JSON line per operational event: `chat_turn` per turn
+  (`durationMs`, `cached`, `tools`, `errorCode`) and `rate_limited`. Content-like keys are stripped before logging;
+  never log messages, keys, or IPs. Langfuse is still not built (it needs account keys); these lines are the intended
+  feed.
+- Chat provenance (`components/Chat.tsx`): tool-using answers render a collapsed "How this answer was computed"
+  block with the raw tool id, the raw arguments the model sent (humanized where known: city, beds, minPrice/maxPrice,
+  fsa, sort, bathsMin, metric, order, limit), and the muted result summary. Cached answers replay the stored tool
+  events, so the block renders on cache hits too.
 - `/api/chat` SSE events: `text`, `tool`, `tool_result`, `cached`, `done`, `error`. `tool_result` carries `data` with
   the raw result: search `{totalMatches, returned, listings}` (rows as-is), snapshot object, compare array. Mismatched
   `Origin` -> 403 and non-exact `application/json` -> 415, both before rate limiting; GET -> 405. Node runtime (not

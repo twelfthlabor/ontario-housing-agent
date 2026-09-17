@@ -7,6 +7,14 @@
  * exercises the real prompt, provider and tool loop without duplicating it
  * and without needing a Next request context.
  *
+ * Cases are single-turn (`question`) or multi-turn (`turns`, 2-3 user turns).
+ * Multi-turn cases call runAgent() once per user turn, appending each
+ * assistant reply to the history before the next turn; only the final turn's
+ * tool events and answer are scored, the first turn must use at least one
+ * tool, and every turn's answer and tool names are recorded in the report.
+ * `expect` may name one tool or `anyOf` alternatives; the case passes when any
+ * alternative matches with the same arg rules.
+ *
  * Modes:
  *   MOCK_LLM=1 npm run evals            # plumbing-only, no network, exit 0
  *   npm run evals                       # live, needs GROQ_API_KEY
@@ -21,11 +29,12 @@
  * no dataset number is hardcoded.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { runAgent } from "../lib/agent";
+import type { AgentInputMessage } from "../lib/agent";
 import { createMockProvider, getProvider } from "../lib/providers";
 import type { Provider } from "../lib/providers";
 import { TOOL_IMPLS, citySnapshot, searchListings } from "../lib/tools";
@@ -52,31 +61,59 @@ type Check =
   | { type: "numeric"; source: NumericSource; unit?: Unit }
   | { type: "refusal"; patterns: string[]; forbid?: string[] };
 
+/** One accepted tool call for `expect.anyOf`. */
+type Expectation = { tool: string; args?: Record<string, unknown> };
+
+type Expect = {
+  tool?: string | null;
+  args?: Record<string, unknown>;
+  no_tool?: boolean;
+  /** Alternatives: the case passes when any entry matches, same arg semantics as `tool`+`args`. */
+  anyOf?: Expectation[];
+};
+
 type EvalCase = {
   id: string;
   category: Category;
-  question: string;
-  expect: { tool: string | null; args?: Record<string, unknown>; no_tool?: boolean };
+  /** Single-turn case. Exactly one of question/turns is required. */
+  question?: string;
+  /** Multi-turn case: 2-3 user turns, scored on the final turn only. */
+  turns?: string[];
+  expect: Expect;
   checks: Check[];
   /** Recognition subject for the structural refusal check (scope_refusal cases). */
   limitation?: string;
   rationale?: string;
 };
 
-type RunOutcome = {
+type ToolEvent = { name: string; args: Record<string, unknown> };
+
+type TurnOutcome = {
   answer: string;
-  toolEvents: Array<{ name: string; args: Record<string, unknown> }>;
-  grounded: number[];
+  toolEvents: ToolEvent[];
   error?: string;
 };
+
+type RunOutcome = TurnOutcome & {
+  grounded: number[];
+  /** Per-turn outcomes in order; set for multi-turn cases, absent for single-turn. */
+  turns?: TurnOutcome[];
+};
+
+/** One row per user turn in a multi-turn case report. */
+type TurnReport = { answer: string; tools: string[]; error?: string };
 
 type CaseReport = {
   id: string;
   category: Category;
   passed: boolean;
   detail: string;
+  /** 1 for single-turn cases; 2-3 for multi-turn cases. */
+  turnCount: number;
   answer: string;
-  tool_events: RunOutcome["toolEvents"];
+  tool_events: ToolEvent[];
+  /** Multi-turn cases only: answer, tool names and error for each user turn. */
+  turns?: TurnReport[];
 };
 
 const CATEGORIES: Category[] = ["tool_choice", "numeric", "scope_refusal"];
@@ -163,26 +200,74 @@ Output: evals/report.json`);
  * Cases
  * ---------------------------------------------------------------------- */
 
-function loadCases(): EvalCase[] {
+/** The user turns of a case: question becomes a one-turn run. */
+export function caseTurns(c: EvalCase): string[] {
+  if (c.turns) return c.turns;
+  return c.question ? [c.question] : [];
+}
+
+/** Parse one JSONL line. Null for blank lines and the `_doc` header; throws on invalid cases. */
+export function parseCaseLine(line: string, where: string): EvalCase | null {
+  if (!line.trim()) return null;
+  const parsed = JSON.parse(line) as Partial<EvalCase> & { _doc?: unknown };
+  if (parsed._doc) return null;
+  if (!parsed.id || !parsed.category || !parsed.expect) {
+    throw new Error(`${where}: missing required fields`);
+  }
+  if (parsed.question !== undefined && parsed.turns !== undefined) {
+    throw new Error(`${where}: use either question or turns, not both`);
+  }
+  if (parsed.question !== undefined) {
+    if (typeof parsed.question !== "string" || parsed.question.trim() === "") {
+      throw new Error(`${where}: question must be a non-empty string`);
+    }
+  } else if (parsed.turns !== undefined) {
+    if (!Array.isArray(parsed.turns) || parsed.turns.length < 2 || parsed.turns.length > 3) {
+      throw new Error(`${where}: turns must be an array of 2-3 user turns`);
+    }
+    if (parsed.turns.some((turn) => typeof turn !== "string" || turn.trim() === "")) {
+      throw new Error(`${where}: turns must be non-empty strings`);
+    }
+  } else {
+    throw new Error(`${where}: exactly one of question or turns is required`);
+  }
+  if (!CATEGORIES.includes(parsed.category)) {
+    throw new Error(`${where}: unknown category "${parsed.category}"`);
+  }
+  const expect = parsed.expect as Expect;
+  if (expect.anyOf !== undefined) {
+    if (expect.tool !== undefined || expect.no_tool !== undefined) {
+      throw new Error(`${where}: expect.anyOf cannot be combined with expect.tool or expect.no_tool`);
+    }
+    if (!Array.isArray(expect.anyOf) || expect.anyOf.length === 0) {
+      throw new Error(`${where}: expect.anyOf must be a non-empty array`);
+    }
+    for (const alternative of expect.anyOf) {
+      if (!alternative || typeof alternative.tool !== "string") {
+        throw new Error(`${where}: every expect.anyOf entry needs a string tool`);
+      }
+      if (
+        alternative.args !== undefined &&
+        (typeof alternative.args !== "object" || alternative.args === null || Array.isArray(alternative.args))
+      ) {
+        throw new Error(`${where}: expect.anyOf args must be an object`);
+      }
+    }
+  } else if (typeof expect.tool !== "string" && expect.tool !== null) {
+    throw new Error(`${where}: expect.tool must be a string or null`);
+  }
+  if (parsed.category === "scope_refusal" && typeof parsed.limitation !== "string") {
+    throw new Error(`${where}: scope_refusal case needs a limitation regex`);
+  }
+  return parsed as EvalCase;
+}
+
+export function loadCases(): EvalCase[] {
   const lines = readFileSync(CASES_PATH, "utf8").split("\n");
   const cases: EvalCase[] = [];
   for (const [index, line] of lines.entries()) {
-    if (!line.trim()) continue;
-    const parsed = JSON.parse(line) as Partial<EvalCase> & { _doc?: unknown };
-    if (parsed._doc) continue;
-    if (!parsed.id || !parsed.category || !parsed.question || !parsed.expect) {
-      throw new Error(`evals/cases.jsonl line ${index + 1}: missing required fields`);
-    }
-    if (!CATEGORIES.includes(parsed.category)) {
-      throw new Error(`evals/cases.jsonl line ${index + 1}: unknown category "${parsed.category}"`);
-    }
-    if (typeof parsed.expect.tool !== "string" && parsed.expect.tool !== null) {
-      throw new Error(`evals/cases.jsonl line ${index + 1}: expect.tool must be a string or null`);
-    }
-    if (parsed.category === "scope_refusal" && typeof parsed.limitation !== "string") {
-      throw new Error(`evals/cases.jsonl line ${index + 1}: scope_refusal case needs a limitation regex`);
-    }
-    cases.push(parsed as EvalCase);
+    const parsed = parseCaseLine(line, `evals/cases.jsonl line ${index + 1}`);
+    if (parsed) cases.push(parsed);
   }
   return cases;
 }
@@ -449,17 +534,14 @@ function evaluateRefusal(
   return { failures, matched: matched?.source, structural };
 }
 
-async function runAgentCase(c: EvalCase, provider: Provider): Promise<RunOutcome> {
+async function collectTurn(messages: AgentInputMessage[], provider: Provider): Promise<RunOutcome> {
   const toolEvents: RunOutcome["toolEvents"] = [];
   const grounded: number[] = [];
   let answer = "";
   let error: string | undefined;
 
   try {
-    for await (const event of runAgent({
-      messages: [{ role: "user", content: c.question }],
-      provider,
-    })) {
+    for await (const event of runAgent({ messages, provider })) {
       if (event.type === "text") answer += event.delta;
       else if (event.type === "tool") {
         toolEvents.push({ name: event.name, args: event.args });
@@ -484,11 +566,52 @@ async function runAgentCase(c: EvalCase, provider: Provider): Promise<RunOutcome
   return { answer: answer.trim(), toolEvents, grounded, error };
 }
 
+/**
+ * Run one case. Single-turn cases pass exactly one user message. Multi-turn
+ * cases run sequentially, appending each assistant reply to the history before
+ * the next user turn; only the final turn's outcome is scored, and every
+ * earlier turn's outcome is kept for the report.
+ */
+export async function runAgentCase(c: EvalCase, provider: Provider): Promise<RunOutcome> {
+  const turns = caseTurns(c);
+  if (turns.length === 1) {
+    return collectTurn([{ role: "user", content: turns[0] }], provider);
+  }
+
+  const history: AgentInputMessage[] = [];
+  const turnOutcomes: TurnOutcome[] = [];
+  let outcome: RunOutcome | undefined;
+  for (const turn of turns) {
+    history.push({ role: "user", content: turn });
+    outcome = await collectTurn(history, provider);
+    turnOutcomes.push({ answer: outcome.answer, toolEvents: outcome.toolEvents, error: outcome.error });
+    if (outcome.answer) history.push({ role: "assistant", content: outcome.answer });
+  }
+  return { ...(outcome as RunOutcome), turns: turnOutcomes };
+}
+
 function formatValue(value: number, unit: Unit): string {
   if (unit === "percent") return `${Math.round(value * 100) / 100}%`;
   if (unit === "count") return String(value);
   if (unit === "sqft") return `${value.toLocaleString("en-CA")} sqft`;
   return `$${Math.round(value).toLocaleString("en-CA")}`;
+}
+
+/** Match one expectation against the turn's tool events. Any call with the tool name may satisfy it. */
+function matchExpectation(expectation: Expectation, toolEvents: ToolEvent[]): { note?: string; failure?: string } {
+  if (toolEvents.length === 0) return { failure: `tool: expected ${expectation.tool}, no tool called` };
+  const named = toolEvents.filter((event) => event.name === expectation.tool);
+  if (named.length === 0) {
+    return { failure: `tool: expected ${expectation.tool}, got ${toolEvents.map((event) => event.name).join(", ")}` };
+  }
+  const passing = named.find((event) => expectedArgsFailure(expectation.args, event.args) === null);
+  if (passing) {
+    const args = JSON.stringify(passing.args);
+    return { note: `tool ${passing.name}${args !== "{}" ? ` ${args.slice(0, 100)}` : ""}` };
+  }
+  return {
+    failure: `tool args: ${expectedArgsFailure(expectation.args, named[0].args) ?? "no call satisfied expect.args"}`,
+  };
 }
 
 export function evaluateCaseOutcome(c: EvalCase, outcome: RunOutcome): { passed: boolean; detail: string } {
@@ -497,6 +620,10 @@ export function evaluateCaseOutcome(c: EvalCase, outcome: RunOutcome): { passed:
 
   if (outcome.error) failures.push(`error: ${outcome.error}`);
   if (!outcome.answer) failures.push("empty answer");
+  // A multi-turn run whose first answer was ungrounded is not evidence of thread handling.
+  if (outcome.turns && outcome.turns.length > 0 && outcome.turns[0].toolEvents.length === 0) {
+    failures.push("first turn used no tool");
+  }
 
   if (outcome.answer) {
     if (c.category === "tool_choice") {
@@ -507,23 +634,20 @@ export function evaluateCaseOutcome(c: EvalCase, outcome: RunOutcome): { passed:
       if (c.expect.no_tool) {
         if (outcome.toolEvents.length > 0) failures.push(`no_tool expected, got ${outcome.toolEvents[0].name}`);
         else notes.push("no tool (as expected)");
-      } else if (c.expect.tool) {
-        const named = outcome.toolEvents.filter((event) => event.name === c.expect.tool);
-        if (outcome.toolEvents.length === 0) failures.push(`tool: expected ${c.expect.tool}, no tool called`);
-        else if (named.length === 0) {
-          failures.push(
-            `tool: expected ${c.expect.tool}, got ${outcome.toolEvents.map((event) => event.name).join(", ")}`,
-          );
-        } else {
-          // Any call to the expected tool may satisfy expect.args, not just the first.
-          const passing = named.find((event) => expectedArgsFailure(c.expect.args, event.args) === null);
-          if (passing) {
-            const args = JSON.stringify(passing.args);
-            notes.push(`tool ${passing.name}${args !== "{}" ? ` ${args.slice(0, 100)}` : ""}`);
-          } else {
-            failures.push(
-              `tool args: ${expectedArgsFailure(c.expect.args, named[0].args) ?? "no call satisfied expect.args"}`,
-            );
+      } else {
+        const alternatives: Expectation[] = c.expect.anyOf?.length
+          ? c.expect.anyOf
+          : c.expect.tool
+            ? [{ tool: c.expect.tool, args: c.expect.args }]
+            : [];
+        if (alternatives.length > 0) {
+          const results = alternatives.map((alternative) => matchExpectation(alternative, outcome.toolEvents));
+          const passing = results.find((result) => result.note);
+          if (passing?.note) notes.push(passing.note);
+          else if (alternatives.length === 1) failures.push(results[0].failure ?? "tool expectation failed");
+          else {
+            const reasons = results.map((result) => result.failure).filter((reason): reason is string => Boolean(reason));
+            failures.push(`tool: no alternative matched (${reasons.join("; ")})`);
           }
         }
       }
@@ -569,10 +693,101 @@ export function evaluateCaseOutcome(c: EvalCase, outcome: RunOutcome): { passed:
  * Reporting
  * ---------------------------------------------------------------------- */
 
+/** One report row for one case; multi-turn cases carry the per-turn answers and tool names. */
+export function buildCaseReport(c: EvalCase, outcome: RunOutcome): CaseReport {
+  const { passed, detail } = evaluateCaseOutcome(c, outcome);
+  const row: CaseReport = {
+    id: c.id,
+    category: c.category,
+    passed,
+    detail,
+    turnCount: caseTurns(c).length,
+    answer: outcome.answer,
+    tool_events: outcome.toolEvents,
+  };
+  if (outcome.turns) {
+    row.turns = outcome.turns.map((turn) => ({
+      answer: turn.answer,
+      tools: turn.toolEvents.map((event) => event.name),
+      ...(turn.error ? { error: turn.error } : {}),
+    }));
+  }
+  return row;
+}
+
+type EvalReport = {
+  complete_suite: boolean;
+  quality_gate_passed: boolean;
+  mode: "mock" | "live";
+  plumbing_only: boolean;
+  provider: string;
+  started_at: string;
+  finished_at: string;
+  totals: {
+    cases: number;
+    passed: number;
+    failed: number;
+    pass_rate: number;
+    by_category: Record<string, { cases: number; passed: number }>;
+  };
+  scores: { tool_accuracy: number | null; numeric_accuracy: number | null; refusal_accuracy: number | null };
+  cases: CaseReport[];
+};
+
 function scoreOf(cases: CaseReport[], category: Category): number | null {
   const rows = cases.filter((row) => row.category === category);
   if (rows.length === 0) return null;
   return rows.filter((row) => row.passed).length / rows.length;
+}
+
+/**
+ * Build the report from the cases scored so far. Used for both the incremental
+ * writes during a run and the final write, so the file shape never changes.
+ * `completeSuite` is true only when the full suite was selected and the run
+ * reached the end; partial or in-progress reports cannot pass the gate.
+ */
+export function buildReport(
+  cases: CaseReport[],
+  options: { isMock: boolean; providerName: string; startedAt: Date; completeSuite: boolean },
+): EvalReport {
+  const scores = {
+    tool_accuracy: scoreOf(cases, "tool_choice"),
+    numeric_accuracy: scoreOf(cases, "numeric"),
+    refusal_accuracy: scoreOf(cases, "scope_refusal"),
+  };
+  const passed = cases.filter((row) => row.passed).length;
+  const totals = {
+    cases: cases.length,
+    passed,
+    failed: cases.length - passed,
+    pass_rate: cases.length ? passed / cases.length : 0,
+    by_category: Object.fromEntries(
+      CATEGORIES.map((category) => {
+        const rows = cases.filter((row) => row.category === category);
+        return [category, { cases: rows.length, passed: rows.filter((row) => row.passed).length }];
+      }),
+    ),
+  };
+
+  return {
+    complete_suite: options.completeSuite,
+    quality_gate_passed: qualityGatePassed(scores, options.isMock, options.completeSuite),
+    mode: options.isMock ? "mock" : "live",
+    plumbing_only: options.isMock,
+    provider: options.providerName,
+    started_at: options.startedAt.toISOString(),
+    finished_at: new Date().toISOString(),
+    totals,
+    scores,
+    cases,
+  };
+}
+
+/** Atomic write: a hard kill mid-write leaves the previous report, never a truncated one. */
+function writeReport(report: EvalReport): void {
+  const tmp = `${REPORT_PATH}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(report, null, 2)}\n`);
+  renameSync(tmp, REPORT_PATH);
 }
 
 export function qualityGatePassed(
@@ -655,56 +870,33 @@ async function main(): Promise<number> {
     }\n`,
   );
 
+  const fullSuite = selected.length === allCases.length;
+  const reportMeta = (completeSuite: boolean) => ({
+    isMock,
+    providerName: provider.name,
+    startedAt,
+    completeSuite,
+  });
+
   const reportCases: CaseReport[] = [];
   for (const [index, evalCase] of selected.entries()) {
     const outcome = await runAgentCase(evalCase, provider);
-    const { passed, detail } = evaluateCaseOutcome(evalCase, outcome);
-    reportCases.push({
-      id: evalCase.id, category: evalCase.category, passed, detail,
-      answer: outcome.answer, tool_events: outcome.toolEvents,
-    });
+    const row = buildCaseReport(evalCase, outcome);
+    reportCases.push(row);
+    // Persist after every case so an aborted run (quota, crash) keeps partial results.
+    // Intermediate reports never claim a complete suite, so they cannot pass the gate.
+    writeReport(buildReport(reportCases, reportMeta(false)));
     if (!isMock) {
-      console.log(`[${index + 1}/${selected.length}] ${evalCase.id} ${passed ? "PASS" : "FAIL"} ${detail}`);
+      console.log(`[${index + 1}/${selected.length}] ${evalCase.id} ${row.passed ? "PASS" : "FAIL"} ${row.detail}`);
     }
     if (!isMock && index < selected.length - 1) await sleep(delayMs);
   }
 
   printTable(reportCases);
 
-  const scores = {
-    tool_accuracy: scoreOf(reportCases, "tool_choice"),
-    numeric_accuracy: scoreOf(reportCases, "numeric"),
-    refusal_accuracy: scoreOf(reportCases, "scope_refusal"),
-  };
-  const passed = reportCases.filter((row) => row.passed).length;
-  const totals = {
-    cases: reportCases.length,
-    passed,
-    failed: reportCases.length - passed,
-    pass_rate: reportCases.length ? passed / reportCases.length : 0,
-    by_category: Object.fromEntries(
-      CATEGORIES.map((category) => {
-        const rows = reportCases.filter((row) => row.category === category);
-        return [category, { cases: rows.length, passed: rows.filter((row) => row.passed).length }];
-      }),
-    ),
-  };
-
-  const completeSuite = selected.length === allCases.length;
-  const qualityPassed = qualityGatePassed(scores, isMock, completeSuite);
-  const report = {
-    complete_suite: completeSuite,
-    quality_gate_passed: qualityPassed,
-    mode: isMock ? "mock" : "live",
-    plumbing_only: isMock,
-    provider: provider.name,
-    started_at: startedAt.toISOString(),
-    finished_at: new Date().toISOString(),
-    totals,
-    scores,
-    cases: reportCases,
-  };
-  writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  const report = buildReport(reportCases, reportMeta(fullSuite));
+  writeReport(report);
+  const { scores, totals } = report;
 
   const formatScore = (value: number | null) => (value === null ? "n/a" : value.toFixed(2));
   console.log(
@@ -729,7 +921,7 @@ async function main(): Promise<number> {
     console.error(`\nthresholds failed: ${thresholdFailures.join(", ")}`);
     return 1;
   }
-  console.log(completeSuite
+  console.log(report.complete_suite
     ? "\nFull-suite thresholds passed (automated checks; review answers before release)."
     : "\nSelected-case thresholds passed. Partial run: full quality gate is still pending.");
   return 0;

@@ -45,6 +45,38 @@ export type SearchQuery = {
 export type SnapshotQuery = {
   city: string;
   fsa?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  beds?: number;
+  bathsMin?: number;
+};
+
+export type RankMetric = "median_price" | "count";
+
+export type RankAreasQuery = {
+  city: string;
+  metric?: RankMetric;
+  order?: "asc" | "desc";
+  beds?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  bathsMin?: number;
+  limit?: number;
+};
+
+export type AreaRank = {
+  fsa: string;
+  count: number;
+  medianPrice: number;
+};
+
+export type RankAreasResult = {
+  city: string;
+  metric: RankMetric;
+  order: "asc" | "desc";
+  considered: number;
+  areas: AreaRank[];
+  totalAreas: number;
 };
 
 export type SearchResult = {

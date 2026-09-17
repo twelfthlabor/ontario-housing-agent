@@ -3,12 +3,13 @@ import {
   citySnapshot,
   compareCities,
   knownCities,
+  rankAreas,
   searchListings,
   TOOL_IMPLS,
   TOOL_SPECS,
 } from "../lib/tools";
 import { listings, summary } from "../lib/dataset";
-import type { Listing } from "../lib/types";
+import type { AreaRank, Listing, RankMetric } from "../lib/types";
 
 const cities = Object.keys(summary.cities);
 const topCity = cities.reduce(
@@ -22,6 +23,40 @@ function medianOf(values: number[]): number | null {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function roundHalfUp(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.floor(value * factor + 0.5) / factor;
+}
+
+type AreaFilters = { minPrice?: number; maxPrice?: number; beds?: number; bathsMin?: number };
+
+/** Independent recomputation of the rank_areas grouping rules from the raw dataset. */
+function expectedRankedAreas(city: string, filters: AreaFilters = {}): AreaRank[] {
+  const pricesByFsa = new Map<string, number[]>();
+  for (const row of listings) {
+    if (row.city !== city || row.fsa === null) continue;
+    if (filters.minPrice !== undefined && row.price < filters.minPrice) continue;
+    if (filters.maxPrice !== undefined && row.price > filters.maxPrice) continue;
+    if (filters.beds !== undefined && row.beds !== filters.beds) continue;
+    if (filters.bathsMin !== undefined && (row.baths === null || row.baths < filters.bathsMin)) continue;
+    const bucket = pricesByFsa.get(row.fsa) ?? [];
+    bucket.push(row.price);
+    pricesByFsa.set(row.fsa, bucket);
+  }
+  return [...pricesByFsa.entries()]
+    .filter(([, prices]) => prices.length >= 5)
+    .map(([fsa, prices]) => ({ fsa, count: prices.length, medianPrice: medianOf(prices) as number }));
+}
+
+function sortedAreas(areas: AreaRank[], metric: RankMetric, order: "asc" | "desc"): AreaRank[] {
+  const direction = order === "asc" ? 1 : -1;
+  return [...areas].sort(
+    (a, b) =>
+      direction * (metric === "count" ? a.count - b.count : a.medianPrice - b.medianPrice) ||
+      a.fsa.localeCompare(b.fsa),
+  );
 }
 
 describe("knownCities", () => {
@@ -251,6 +286,93 @@ describe("citySnapshot with fsa", () => {
   });
 });
 
+describe("citySnapshot filters", () => {
+  const cityRows = listings.filter((row) => row.city === topCity);
+
+  it("computes the whole snapshot over the filtered subset", () => {
+    const expected = cityRows.filter((row) => row.beds === 2 && row.price <= 700_000);
+    expect(expected.length).toBeGreaterThan(0);
+
+    const snapshot = citySnapshot({ city: topCity, beds: 2, maxPrice: 700_000 });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.city).toBe(topCity);
+    expect(snapshot?.count).toBe(expected.length);
+
+    const prices = expected.map((row) => row.price);
+    expect(snapshot?.medianPrice).toBe(medianOf(prices));
+    expect(snapshot?.shareUnder1M).toBe(
+      roundHalfUp(prices.filter((price) => price < 1_000_000).length / expected.length, 3),
+    );
+    expect(snapshot?.medianByBeds).toEqual({
+      "1": null,
+      "2": medianOf(prices),
+      "3": null,
+      "4": null,
+      "5+": null,
+    });
+    const sqfts = expected.filter((row) => row.sqft !== null).map((row) => row.sqft as number);
+    expect(snapshot?.medianSqft).toBe(sqfts.length >= 10 ? medianOf(sqfts) : null);
+    expect(snapshot?.updated).toBe(expected.reduce((latest, row) => (row.seen > latest ? row.seen : latest), ""));
+  });
+
+  it("applies bathsMin together with inclusive price bounds", () => {
+    const expected = cityRows.filter(
+      (row) => row.price >= 400_000 && row.price <= 900_000 && row.baths !== null && row.baths >= 2,
+    );
+    expect(expected.length).toBeGreaterThan(0);
+
+    const snapshot = citySnapshot({ city: topCity, minPrice: 400_000, maxPrice: 900_000, bathsMin: 2 });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.count).toBe(expected.length);
+    expect(snapshot?.medianPrice).toBe(medianOf(expected.map((row) => row.price)));
+  });
+
+  it("returns null when the filters match no listings", () => {
+    expect(citySnapshot({ city: topCity, minPrice: 50_000_000 })).toBeNull();
+    expect(citySnapshot({ city: topCity, beds: 99 })).toBeNull();
+    expect(citySnapshot({ city: topCity, bathsMin: 99 })).toBeNull();
+    expect(citySnapshot({ city: topCity, beds: 2, maxPrice: 1 })).toBeNull();
+    expect(citySnapshot({ city: "atlantis", beds: 2 })).toBeNull();
+  });
+
+  it("composes filters with an fsa scope", () => {
+    const byFsa = new Map<string, Listing[]>();
+    for (const row of cityRows) {
+      if (!row.fsa) continue;
+      const bucket = byFsa.get(row.fsa) ?? [];
+      bucket.push(row);
+      byFsa.set(row.fsa, bucket);
+    }
+    const [fsa, fsaRows] = [...byFsa.entries()].find(([, bucket]) =>
+      bucket.some((row) => row.beds !== null),
+    ) as [string, Listing[]];
+    const bed = fsaRows.find((row) => row.beds !== null)?.beds as number;
+    const expected = fsaRows.filter((row) => row.beds === bed);
+
+    const snapshot = citySnapshot({ city: topCity, fsa, beds: bed });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.count).toBe(expected.length);
+    expect(snapshot?.medianPrice).toBe(medianOf(expected.map((row) => row.price)));
+  });
+
+  it("keeps the unfiltered path on the cached city snapshot", () => {
+    expect(citySnapshot({ city: topCity })).toEqual(citySnapshot(topCity));
+    expect(
+      citySnapshot({
+        city: topCity,
+        fsa: "",
+        minPrice: undefined,
+        maxPrice: undefined,
+        beds: undefined,
+        bathsMin: undefined,
+      }),
+    ).toEqual(citySnapshot(topCity));
+    expect(citySnapshot({ city: topCity.toUpperCase(), beds: 2, maxPrice: 700_000 })).toEqual(
+      citySnapshot({ city: topCity, beds: 2, maxPrice: 700_000 }),
+    );
+  });
+});
+
 describe("city aliases", () => {
   const aliases: Array<[string, string]> = [
     ["St. Catharines", "st-catharines"],
@@ -298,10 +420,121 @@ describe("compareCities", () => {
   });
 });
 
+describe("rankAreas", () => {
+  it("returns null for an unknown or empty city", () => {
+    expect(rankAreas({ city: "atlantis" })).toBeNull();
+    expect(rankAreas({ city: "" })).toBeNull();
+    expect(rankAreas({ city: "   " })).toBeNull();
+  });
+
+  it("groups by fsa, excludes rows with no fsa, drops areas under 5 listings, and defaults to the 5 cheapest by median", () => {
+    const expected = expectedRankedAreas(topCity);
+    expect(expected.length).toBeGreaterThan(0);
+    const result = rankAreas({ city: topCity });
+
+    expect(result).not.toBeNull();
+    expect(result?.city).toBe(topCity);
+    expect(result?.metric).toBe("median_price");
+    expect(result?.order).toBe("asc");
+    expect(result?.considered).toBe(
+      listings.filter((row) => row.city === topCity && row.fsa !== null).length,
+    );
+    expect(result?.totalAreas).toBe(expected.length);
+    expect(result?.areas.length).toBe(Math.min(5, expected.length));
+    expect(result?.areas).toEqual(sortedAreas(expected, "median_price", "asc").slice(0, 5));
+    for (const area of result?.areas ?? []) {
+      expect(area.count).toBeGreaterThanOrEqual(5);
+    }
+    expect(result?.areas.some((area) => area.medianPrice > 0)).toBe(true);
+  });
+
+  it("ranks by count descending by default", () => {
+    const expected = sortedAreas(expectedRankedAreas(topCity), "count", "desc");
+    const result = rankAreas({ city: topCity, metric: "count" });
+
+    expect(result?.metric).toBe("count");
+    expect(result?.order).toBe("desc");
+    expect(result?.totalAreas).toBe(expected.length);
+    expect(result?.areas).toEqual(expected.slice(0, 5));
+    for (let i = 1; i < (result?.areas.length ?? 0); i += 1) {
+      expect(result?.areas[i].count).toBeLessThanOrEqual(result?.areas[i - 1].count as number);
+    }
+  });
+
+  it("honours an explicit order for both metrics", () => {
+    expect(rankAreas({ city: topCity, metric: "count", order: "asc" })?.areas).toEqual(
+      sortedAreas(expectedRankedAreas(topCity), "count", "asc").slice(0, 5),
+    );
+    expect(rankAreas({ city: topCity, metric: "median_price", order: "desc" })?.areas).toEqual(
+      sortedAreas(expectedRankedAreas(topCity), "median_price", "desc").slice(0, 5),
+    );
+  });
+
+  it("defaults to 5 areas and caps the limit at 10", () => {
+    const total = expectedRankedAreas(topCity).length;
+    expect(total).toBeGreaterThan(6);
+    expect(rankAreas({ city: topCity })?.areas.length).toBe(5);
+    expect(rankAreas({ city: topCity, limit: 2 })?.areas.length).toBe(2);
+    expect(rankAreas({ city: topCity, limit: 999 })?.areas.length).toBe(10);
+    expect(rankAreas({ city: topCity, limit: 0 })?.areas.length).toBe(1);
+    expect(rankAreas({ city: topCity, limit: 2 })?.totalAreas).toBe(total);
+  });
+
+  it("applies price, bed, and bath filters before grouping", () => {
+    const filters = { beds: 2, maxPrice: 700_000, bathsMin: 1 };
+    const expected = sortedAreas(expectedRankedAreas(topCity, filters), "median_price", "asc");
+    expect(expected.length).toBeGreaterThan(0);
+
+    const result = rankAreas({ city: topCity, ...filters, limit: 10 });
+    expect(result?.considered).toBe(
+      listings.filter(
+        (row) =>
+          row.city === topCity &&
+          row.fsa !== null &&
+          row.beds === 2 &&
+          row.price <= 700_000 &&
+          row.baths !== null &&
+          row.baths >= 1,
+      ).length,
+    );
+    expect(result?.totalAreas).toBe(expected.length);
+    expect(result?.areas).toEqual(expected.slice(0, 10));
+  });
+
+  it("excludes rows without an fsa from the grouping", () => {
+    const nullFsaCity = listings.find((row) => row.fsa === null)?.city as string;
+    expect(nullFsaCity).toBeDefined();
+    const result = rankAreas({ city: nullFsaCity, limit: 10 });
+    expect(result).not.toBeNull();
+    expect(result?.considered).toBe(
+      listings.filter((row) => row.city === nullFsaCity && row.fsa !== null).length,
+    );
+    expect(result?.considered).toBeLessThan(listings.filter((row) => row.city === nullFsaCity).length);
+    for (const area of result?.areas ?? []) {
+      expect(listings.filter((row) => row.city === nullFsaCity && row.fsa === area.fsa)).toHaveLength(area.count);
+    }
+  });
+
+  it("returns an empty ranking when the filters match nothing", () => {
+    expect(rankAreas({ city: topCity, minPrice: 50_000_000 })).toEqual({
+      city: topCity,
+      metric: "median_price",
+      order: "asc",
+      considered: 0,
+      areas: [],
+      totalAreas: 0,
+    });
+  });
+
+  it("normalises city aliases like the other tools", () => {
+    expect(rankAreas({ city: "St. Catharines" })).toEqual(rankAreas({ city: "st-catharines" }));
+  });
+});
+
 describe("tool specs and implementations", () => {
-  it("exposes the three OpenAI-style specs", () => {
+  it("exposes the four OpenAI-style specs", () => {
     const names = TOOL_SPECS.map((spec) => spec.function.name);
-    expect(names).toEqual(["search_listings", "city_snapshot", "compare_cities"]);
+    expect(names).toEqual(["search_listings", "city_snapshot", "rank_areas", "compare_cities"]);
     for (const spec of TOOL_SPECS) {
       expect(spec.type).toBe("function");
       expect(spec.function.description).toContain("never invent numbers");
@@ -335,6 +568,43 @@ describe("tool specs and implementations", () => {
     expect(TOOL_IMPLS.city_snapshot({ city: topCity, fsa: fsa.toLowerCase() })).toEqual(
       citySnapshot({ city: topCity, fsa }),
     );
+
+    expect(
+      TOOL_IMPLS.city_snapshot({
+        city: topCity.toUpperCase(),
+        beds: "2",
+        maxPrice: "700000",
+        bathsMin: "1",
+      }),
+    ).toEqual(citySnapshot({ city: topCity, beds: 2, maxPrice: 700_000, bathsMin: 1 }));
+
+    expect(
+      TOOL_IMPLS.rank_areas({
+        city: topCity.toUpperCase(),
+        metric: "count",
+        order: "asc",
+        beds: "2",
+        minPrice: "400000",
+        maxPrice: "900000",
+        bathsMin: "1",
+        limit: "3",
+      }),
+    ).toEqual(
+      rankAreas({
+        city: topCity,
+        metric: "count",
+        order: "asc",
+        beds: 2,
+        minPrice: 400_000,
+        maxPrice: 900_000,
+        bathsMin: 1,
+        limit: 3,
+      }),
+    );
+    expect(TOOL_IMPLS.rank_areas({ city: "atlantis" })).toBeNull();
+    expect(TOOL_IMPLS.rank_areas({ city: topCity, metric: "bogus", order: "bogus", limit: "999" })).toEqual(
+      rankAreas({ city: topCity, limit: 999 }),
+    );
   });
 
   it("documents the optional fsa parameter on the listing and snapshot specs", () => {
@@ -349,5 +619,38 @@ describe("tool specs and implementations", () => {
       expect(properties.fsa?.description).toContain("rows without a postal code are excluded");
       expect(spec?.function.parameters.required).toEqual(["city"]);
     }
+  });
+
+  it("documents the optional filters on the snapshot and rank_areas specs", () => {
+    for (const name of ["city_snapshot", "rank_areas"]) {
+      const spec = TOOL_SPECS.find((entry) => entry.function.name === name);
+      const properties = spec?.function.parameters.properties as unknown as Record<
+        string,
+        { description?: string }
+      >;
+      for (const key of ["minPrice", "maxPrice", "beds", "bathsMin"]) {
+        expect(properties[key]?.description).toBeTruthy();
+      }
+      expect(spec?.function.parameters.required).toEqual(["city"]);
+      expect(spec?.function.description).toContain("filters");
+    }
+
+    const rank = TOOL_SPECS.find((entry) => entry.function.name === "rank_areas");
+    const rankProperties = rank?.function.parameters.properties as unknown as Record<
+      string,
+      { enum?: string[]; maximum?: number }
+    >;
+    const rankDescription = rank?.function.description ?? "";
+    expect(rankDescription).toContain("postal areas (FSAs)");
+    expect(rankDescription).toContain("at least 5 matching listings");
+    expect(rankDescription).toContain("bathroom");
+    expect(rankDescription).not.toContain("same bedroom, bathroom, and price filters as search_listings");
+    expect(rankDescription).toContain('"totalAreas"');
+    expect(rankProperties.metric?.enum).toEqual(["median_price", "count"]);
+    expect(rankProperties.order?.enum).toEqual(["asc", "desc"]);
+    expect(rankProperties.limit?.maximum).toBe(10);
+
+    const search = TOOL_SPECS.find((entry) => entry.function.name === "search_listings");
+    expect(search?.function.parameters.properties).not.toHaveProperty("bathsMin");
   });
 });

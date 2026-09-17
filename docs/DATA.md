@@ -9,8 +9,10 @@ Raw listings come from the separate `property-scraper` project, treated as
 read-only here: per-city CSVs of current listings at
 `../property-scraper/data/regions/<city>/listings.csv`.
 
-The build covers 36 Ontario cities and produces 19,356 rows after cleaning. The
-published sample includes each listing's address and a link to the source
+The published snapshot covers 36 Ontario cities with 19,356 rows after
+cleaning. A rebuild reads the newest scrape tree, so its row count follows the
+scrape data and can differ from the tracked snapshot (see [Refresh](#refresh)).
+The published sample includes each listing's address and a link to the source
 listing; listing ids, agent names, and scraped source pages are not published.
 
 ## Build
@@ -37,7 +39,8 @@ It writes:
 
 - Current for-sale asking listings.
 - 36 Ontario cities.
-- 19,356 rows after dedupe and filtering.
+- 19,356 rows in the published snapshot after dedupe and filtering (a rebuild
+  from a newer scrape tree can carry more).
 
 ## Cleaning rules
 
@@ -92,7 +95,7 @@ process and served with a one-hour browser / one-day CDN cache.
 ## Square footage
 
 `sqft` is missing for most rows and coverage varies by city. The plausibility
-rule above nulled 76 values in the current build, 12 of them zeros. 20.0% of
+rule above nulled 76 values in the tracked snapshot, 12 of them zeros. 20.0% of
 kept rows carry `sqft` (3,875 of 19,356), down from 20.4% (3,939 positive
 values) before the rule; non-null values now range from 236 to 12,749.
 
@@ -111,10 +114,16 @@ Refresh is automated by `scripts/ontario_refresh.sh`, run every 24 hours by a
 launchd agent (`scripts/install_refresh_schedule.sh` installs it; log at
 `output/refresh.log`). It starts a scrape refresh when the newest region CSV is
 older than 7 days, or when a previous run left regions unfinished
-(pending/partial/challenged), at most one start per 24 hours. Once a scrape has settled with newer CSVs it rebuilds the
-snapshot, runs the pipeline tests and vitest suite, and commits and pushes
-`data/listings.json` + `data/market_summary.json` to `origin`; Vercel
-auto-deploys and the agent serves the new snapshot after deploy.
+(pending/partial/challenged), at most one start per 24 hours. Once a scrape has
+settled with newer CSVs it rebuilds the snapshot, runs the pipeline tests and
+vitest suite, and commits and pushes only `data/listings.json` +
+`data/market_summary.json` to `origin` (the owner's automation, path-scoped so
+unrelated work is not committed); Vercel auto-deploys and the agent serves the
+new snapshot after deploy.
+
+Publishing waits for the next scheduled run, so the app snapshot can lag the
+newest scrape date until then. The app serves the tracked files, not the live
+scrape tree.
 
 Manual fallback:
 
@@ -137,9 +146,10 @@ a human clears it in the attach Chrome and the next run resumes the queue.
 - **Single snapshot.** The current build keeps no history, so price changes and
   price cuts cannot be computed. Adding that would require snapshot archiving in
   `property-scraper` (planned).
-- **Staleness.** The snapshot refreshes automatically as scrape data advances
-  (checked every 24 hours), but a Zillow challenge or an interrupted queue can
-  leave it a few days old until a human clears the challenge.
+- **Staleness.** The scheduled job publishes a settled scrape when it next
+  runs, so the app can lag the newest scrape data until then; a Zillow
+  challenge or an interrupted queue can leave it a few days old until a human
+  clears the challenge.
 - **Duplicate rows.** Dedupe is by listing id only. 620 rows still repeat another
   row on the seven non-address fields (city, FSA, price, beds, baths, sqft,
   seen) while differing in address/url, which can slightly overstate

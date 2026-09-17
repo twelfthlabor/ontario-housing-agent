@@ -260,10 +260,21 @@ dialog[open] { animation: dialog-enter 220ms var(--ease); }
 .listing-card-meta { font-size: 9px; line-height: 1.5; color: #89917f; }
 .listing-card-address { font-size: 9px; line-height: 1.5; color: #6f7a68; overflow-wrap: anywhere; }
 .listing-card-city { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 9px; color: #8a9285; overflow-wrap: anywhere; }
-.listing-card-fsa { font: 8px var(--mono); letter-spacing: .5px; color: #66755c; background: #edf1e5; border-radius: 3px; padding: 2px 4px; }
+.listing-card-fsa, .provenance-fsa { font: 8px var(--mono); letter-spacing: .5px; color: #66755c; background: #edf1e5; border-radius: 3px; padding: 2px 4px; }
 .listing-card a { margin-top: auto; font-size: 9px; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
 .listing-cards-note { font: 8px var(--mono); color: #9aa28e; }
 .answer-basis { font-size: 9px; line-height: 1.6; color: #9aa28e; }
+.provenance { color: var(--muted); }
+.provenance > summary { display: flex; align-items: center; gap: 5px; cursor: pointer; list-style: none; min-height: 22px; font: 8px var(--mono); letter-spacing: .3px; }
+.provenance > summary::-webkit-details-marker { display: none; }
+.provenance > summary > svg { width: 11px; height: 11px; }
+.provenance > summary:hover { color: var(--ink); }
+.provenance > summary > .provenance-chevron { width: 10px; height: 10px; transition: transform 160ms var(--ease); }
+.provenance[open] .provenance-chevron { transform: rotate(180deg); }
+.provenance-body { display: flex; flex-direction: column; gap: 7px; min-width: 0; margin-top: 5px; padding: 9px 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.provenance-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.provenance-call { font: 9px var(--mono); line-height: 1.7; color: var(--ink); overflow-wrap: anywhere; }
+.provenance-result { font-size: 9px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
 .thinking { display: flex; gap: 4px; align-items: center; height: 20px; }
 .thinking > span:not(.sr-only) { width: 4px; height: 4px; border-radius: 50%; background: #9bac7f; animation: breathe 1s infinite; }
 .thinking > span:nth-child(2) { animation-delay: .15s; }

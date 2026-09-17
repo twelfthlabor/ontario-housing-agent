@@ -16,16 +16,20 @@ to the browser.
 | --- | --- | --- |
 | `pipeline/build_dataset.py` | Reads `../property-scraper/data/regions/*/listings.csv`, dedupes by listing id (never emitted), filters (price, beds/baths, implausible sqft), extracts the FSA, writes nine fields incl. address and source URL | built |
 | `data/listings.json`, `data/market_summary.json` | Published sample (19,356 rows) and per-city aggregates, kept as JSON in the repo (no database) | built |
-| `lib/tools.ts` | Deterministic search/stats functions + OpenAI-style tool schemas | built |
+| `lib/tools.ts` | Deterministic search/stats functions (`search_listings`, filtered `city_snapshot`, `rank_areas`, `compare_cities`) + OpenAI-style tool schemas | built; filters + `rank_areas` 2026-09-17 |
 | `/api/chat` | Streams the agent loop over SSE | built |
 | FSA narrowing | Optional `fsa` on `search_listings` and `city_snapshot`; full postal codes reduce to the 3-character FSA | built (2026-09-16) |
+| Filtered snapshots | `city_snapshot` optional `minPrice`/`maxPrice`/`beds`/`bathsMin`; stats over the matching rows, `null` when none match | built (2026-09-17) |
+| Area rankings | `rank_areas` ranks a city's FSAs by median asking price or listing count; 5-listing minimum per area, default 5 rows / max 10, reports `considered` and `totalAreas` | built (2026-09-17) |
+| Answer provenance | Collapsed "How this answer was computed" block: raw tool id, raw arguments (humanized where known), muted result summary; cache hits replay it | built (2026-09-17) |
+| Observability | One metadata-only `chat_turn` log line per turn plus `rate_limited` events; Langfuse traces still planned (need account keys) | built (2026-09-17) |
 | Structured `tool_result` data | SSE results carry `data`; search answers render up to 6 listing cards (price, beds/baths/sqft, FSA, address, "View listing" link) and a sample-size line; cache hits replay the display events | built (2026-09-16) |
 | Shareable atlas URL | city, compare pair, sort, price ceiling, tab, and view mirrored into the URL and restored on load (share-only; back/forward does not resync) | built (2026-09-16) |
 | Data tab + `/api/listings` | City table from the JSON route (default limit 100, cap 200) and a full CSV export (`?format=csv`, RFC 4180, formula-injection prefixed) | built (2026-09-16) |
 | Groq `openai/gpt-oss-120b` | LLM provider on the free tier | built |
 | Gemini `gemini-2.5-flash-lite` | Optional fallback in `lib/providers.ts`; used only when `GEMINI_API_KEY` is set and Groq fails before emitting output | built |
 | `MOCK_LLM=1` | Deterministic mock LLM for tests/CI | built |
-| Evals harness (`evals/run.ts`, `npm run evals`) | 32 golden cases in `evals/cases.jsonl` (10 tool choice, 10 numeric, 12 refusals) -> `evals/report.json` (gitignored) | live-accepted 2026-09-16 (32/32; see [STATUS.md](STATUS.md)) |
+| Evals harness (`evals/run.ts`, `npm run evals`) | 38 golden cases in `evals/cases.jsonl` (16 tool choice incl. multi-turn MT01-MT04, 10 numeric, 12 refusals) -> `evals/report.json` (gitignored) | plumbing green; live gate pending (last full pass: 32/32 on 2026-09-16) |
 | Langfuse Hobby traces | Observability | planned |
 | GitHub Actions CI | JS tests + build (Node 24, `MOCK_LLM=1`) and pipeline unittest (Python 3.11) gate | green on the first push (2026-09-16) |
 | Vercel Hobby deployment | Public URL | deployed 2026-09-16: https://ontario-housing-agent.vercel.app |
@@ -90,17 +94,24 @@ MOCK_LLM=1 npm run dev  # then curl a question POST to /api/chat;
                         # the stream returns a tool event and an answer
 ```
 
-### M2: Proof (accepted 2026-09-16)
+### M2: Proof (32-case gate accepted 2026-09-16; 38-case suite pending live run)
 
-`npm run evals` runs the 32 golden cases in `evals/cases.jsonl` (10 tool
-choice, 10 numeric, 12 scope refusals) and writes `evals/report.json`
-(gitignored). Live scoring uses the Groq key in the gitignored `.env.local`;
-without a key the harness exits 1 with instructions. `MOCK_LLM=1 npm run evals`
-exercises the plumbing only (no network, exit 0). The full suite passed 32/32 on
-2026-09-16 (tool 1.00, numeric 1.00, refusal 1.00). Earlier runs that day failed
-(25/30 on the old 30-case suite, then 31/32 and 30/32 after the suite grew to
-32) and drove the scorer and prompt fixes, including the structural refusal
-rule; see [STATUS.md](STATUS.md) for the evidence paths.
+`npm run evals` runs the golden cases in `evals/cases.jsonl` and writes
+`evals/report.json` (gitignored). Live scoring uses the Groq key in the
+gitignored `.env.local`; without a key the harness exits 1 with instructions.
+`MOCK_LLM=1 npm run evals` exercises the plumbing only (no network, exit 0).
+The 32-case suite passed 32/32 on 2026-09-16 (tool 1.00, numeric 1.00, refusal
+1.00). It has since grown to 38 cases: 16 tool choice (including MT01-MT04
+multi-turn and capability cases C01/C02 for filtered snapshots and
+`rank_areas`), 10 numeric, 12 scope refusals. Multi-turn cases run 2-3 user
+turns, score only the final turn, and fail if the first turn used no tool;
+expectations may list `anyOf` alternatives, and the report is rewritten after
+each case so a quota-aborted run keeps partial results. No full live run of the
+38-case suite has completed: both 2026-09-17 attempts hit the Groq daily token
+cap (13/38 and 1/38 recorded); see [STATUS.md](STATUS.md) for evidence paths.
+Earlier 32-case runs failed (25/30 on the old 30-case suite, then 31/32 and
+30/32 after the suite grew to 32) and drove the scorer and prompt fixes,
+including the structural refusal rule.
 The report records answers and tool arguments; mock and partial runs cannot mark
 `quality_gate_passed` true. Numeric cases require the expected value to be present
 in actual tool-derived ground truth. Bedroom and limit arguments must match exactly.
@@ -132,8 +143,8 @@ Done:
 
 Pending:
 
-- Langfuse traces visible
-- 3-minute demo video
+- Langfuse traces visible (not built; needs account keys; the `chat_turn` logs are the intended feed)
+- 3-minute demo video (script in [DEMO.md](DEMO.md))
 
 The optional Gemini default was updated from retired `gemini-2.0-flash` to
 `gemini-2.5-flash-lite`; [Google lists the former as shut down](https://ai.google.dev/gemini-api/docs/deprecations).
@@ -155,17 +166,35 @@ checks across 32 cases. Verified with 116 vitest tests, 19 pipeline tests, clean
 (both data paths), and a security sweep that found no secrets or personal data
 beyond the intended public listing fields.
 
-Still open: multi-turn eval coverage, visitor feedback, and Langfuse traces;
-property type and price-cut history need snapshot archiving in
-`property-scraper` (see Later). URL state is share-only (one-way `replaceState`;
-back/forward does not resync it), and the answer cache is per-instance, resetting
-on cold start.
+Still open from this round: visitor feedback and Langfuse traces; property
+type and price-cut history need snapshot archiving in `property-scraper` (see
+Later). URL state is share-only (one-way `replaceState`; back/forward does not
+resync it), and the answer cache is per-instance, resetting on cold start.
+
+### M5: Filtered answers, provenance, observability (2026-09-17, live gate pending)
+
+Landed: `city_snapshot` filters (`minPrice`, `maxPrice`, `beds`, `bathsMin`,
+`null` when nothing matches), the `rank_areas` tool (median price or count, 5+
+matching listings per area, default limit 5 / max 10, `considered` /
+`totalAreas`), the collapsible provenance block in chat, metadata-only
+`chat_turn` logs, and a 38-case eval suite that adds multi-turn cases
+(MT01-MT04) and capability cases (C01, C02) for the two new behaviors.
+Multi-turn coverage is no longer missing.
+
+Acceptance: `MOCK_LLM=1 npm test`, `python3 -m unittest discover -s
+pipeline/tests`, `npx tsc --noEmit`, `MOCK_LLM=1 npm run build`, and
+`MOCK_LLM=1 npm run evals` over 38 cases, then a full live run. The live run is
+pending: both 2026-09-17 attempts hit the Groq daily token cap (13/38 and 1/38
+recorded). The last completed full-suite pass remains the 32-case gate from
+2026-09-16 (32/32).
 
 ### Later (planned)
 
-- Weekly dataset refresh
 - Price-history / price-cut features (requires snapshot archiving in
   `property-scraper`)
+
+Scheduled dataset refresh is live (daily launchd job, commits only the two
+data files when a scrape is settled); see [DATA.md](DATA.md#refresh).
 
 ## Free-stack constraints
 
@@ -207,7 +236,9 @@ Phase 2:
 - **Best-effort limiters**: per-IP and global counters cannot be trusted as a
   cost cap; see Phase 2 above.
 - **Vercel non-commercial terms**: a public demo must remain non-commercial.
-- **Data staleness**: refresh is manual for now, so the published snapshot ages.
+- **Data staleness**: the launchd refresh publishes a settled scrape at most
+  once a day, so the app snapshot can lag the newest scrape until that run;
+  a Zillow challenge can pause scraping entirely.
 - **Zillow terms**: research sample of public listing data; addresses and source
   links are published, but no listing ids, agent names, or scraped source pages;
   not affiliated with Zillow; no financial advice.
